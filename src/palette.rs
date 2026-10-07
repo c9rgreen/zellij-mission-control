@@ -26,12 +26,24 @@ const SKIP: &[&str] = &[
 
 /// Subcommands whose --pane-id or --tab-id means something other than "act on
 /// this pane or tab".
-const NO_TARGET: &[&str] = &["edit", "launch-or-focus-plugin", "launch-plugin", "new-pane", "switch-session"];
+const NO_TARGET: &[&str] = &[
+    "edit",
+    "launch-or-focus-plugin",
+    "launch-plugin",
+    "new-pane",
+    "switch-session",
+];
 
 /// Common flag combinations worth their own entries.
 const VARIANTS: &[(&str, &[&str])] = &[(
     "new-pane",
-    &["--direction right", "--direction down", "--floating", "--stacked", "--in-place"],
+    &[
+        "--direction right",
+        "--direction down",
+        "--floating",
+        "--stacked",
+        "--in-place",
+    ],
 )];
 
 /// The pane and tab focused when the palette opened, which actions run on
@@ -85,7 +97,12 @@ pub fn dispatch(action: &Action) -> Dispatch {
         return Dispatch::RunAction;
     }
     match action {
-        Action::Paste { pane_id: Some(_), .. } | Action::RenamePaneByPaneId { pane_id: Some(_), .. } => Dispatch::Command,
+        Action::Paste {
+            pane_id: Some(_), ..
+        }
+        | Action::RenamePaneByPaneId {
+            pane_id: Some(_), ..
+        } => Dispatch::Command,
         Action::FocusPaneByPaneId { .. }
         | Action::GoToTabById { .. }
         | Action::CloseTabById { .. }
@@ -138,13 +155,24 @@ impl Catalog {
             let about = sub
                 .get_about()
                 .map(|a| a.to_string())
-                .and_then(|a| a.lines().next().map(|l| l.trim().trim_end_matches('.').to_string()))
+                .and_then(|a| {
+                    a.lines()
+                        .next()
+                        .map(|l| l.trim().trim_end_matches('.').to_string())
+                })
                 .unwrap_or_default();
             for (args, needs_input) in expand(sub) {
                 // Some need one of several flags, which only a parse finds
                 let plain = match needs_input {
                     true => None,
-                    false => catalog.actions_for(name, args.clone(), Target::default(), Box::new(|| "/".into())).ok(),
+                    false => catalog
+                        .actions_for(
+                            name,
+                            args.clone(),
+                            Target::default(),
+                            Box::new(|| "/".into()),
+                        )
+                        .ok(),
                 };
                 let needs_input = plain.is_none();
                 let plain = plain.unwrap_or_default();
@@ -175,13 +203,23 @@ impl Catalog {
         self.entries
             .iter()
             .position(|e| e.command() == full)
-            .or_else(|| self.entries.iter().position(|e| e.name == name && e.args.is_empty()))
+            .or_else(|| {
+                self.entries
+                    .iter()
+                    .position(|e| e.name == name && e.args.is_empty())
+            })
     }
 
     pub fn usage(&self, name: &str) -> String {
-        let Some(sub) = self.subcommand(name) else { return String::new() };
+        let Some(sub) = self.subcommand(name) else {
+            return String::new();
+        };
         let usage = sub.clone().render_usage().to_string();
-        usage.strip_prefix("Usage: ").unwrap_or(&usage).trim().to_string()
+        usage
+            .strip_prefix("Usage: ")
+            .unwrap_or(&usage)
+            .trim()
+            .to_string()
     }
 
     /// The actions a command line runs, eg. ("rename-tab", "api server").
@@ -203,20 +241,23 @@ impl Catalog {
                 Err(e) => {
                     // A lone free-text argument can be typed without quotes, eg.
                     // a tab name with spaces
-                    let lone = self
-                        .subcommand(name)
-                        .is_some_and(|sub| sub.get_arguments().filter(|a| a.is_positional()).count() == 1);
+                    let lone = self.subcommand(name).is_some_and(|sub| {
+                        sub.get_arguments().filter(|a| a.is_positional()).count() == 1
+                    });
                     if !lone || words.len() < 2 || words.iter().any(|w| w.starts_with('-')) {
                         return Err(e);
                     }
-                    self.parse(name, vec![words.join(" ")], target, target_all).map_err(|_| e)?
+                    self.parse(name, vec![words.join(" ")], target, target_all)
+                        .map_err(|_| e)?
                 }
             };
             let cwd = cwd.clone();
             Action::actions_from_cli(cli, Box::new(move || cwd()), None)
         };
         match run(true) {
-            Ok(actions) if actions.iter().all(|a| dispatch(a) != Dispatch::Unsupported) => Ok(actions),
+            Ok(actions) if actions.iter().all(|a| dispatch(a) != Dispatch::Unsupported) => {
+                Ok(actions)
+            }
             _ => run(false),
         }
     }
@@ -237,13 +278,29 @@ impl Catalog {
 
     /// Parse a command line, giving it the target's --pane-id and --tab-id
     /// where they're required, or with `target_all` wherever they're taken.
-    fn parse(&self, name: &str, words: Vec<String>, target: Target, target_all: bool) -> Result<CliAction, String> {
-        let sub = self.subcommand(name).ok_or_else(|| format!("no action named {name}"))?;
+    fn parse(
+        &self,
+        name: &str,
+        words: Vec<String>,
+        target: Target,
+        target_all: bool,
+    ) -> Result<CliAction, String> {
+        let sub = self
+            .subcommand(name)
+            .ok_or_else(|| format!("no action named {name}"))?;
         let mut argv = vec![name.to_string()];
-        let targets = [("pane_id", target.pane.map(|p| format!("terminal_{p}"))), ("tab_id", target.tab.map(|t| t.to_string()))];
+        let targets = [
+            ("pane_id", target.pane.map(|p| format!("terminal_{p}"))),
+            ("tab_id", target.tab.map(|t| t.to_string())),
+        ];
         for (id, value) in targets {
             let Some(value) = value else { continue };
-            let Some(arg) = sub.get_arguments().find(|a| a.get_id() == id && !a.is_positional()) else { continue };
+            let Some(arg) = sub
+                .get_arguments()
+                .find(|a| a.get_id() == id && !a.is_positional())
+            else {
+                continue;
+            };
             let wanted = arg.is_required_set() || (target_all && !NO_TARGET.contains(&name));
             // Flags go first, ahead of any trailing command
             if let (Some(long), true, false) = (arg.get_long(), wanted, given(arg, &words)) {
@@ -251,7 +308,11 @@ impl Catalog {
             }
         }
         argv.extend(words);
-        let matches = self.cli.clone().try_get_matches_from(argv).map_err(clap_error)?;
+        let matches = self
+            .cli
+            .clone()
+            .try_get_matches_from(argv)
+            .map_err(clap_error)?;
         CliAction::from_arg_matches(&matches).map_err(clap_error)
     }
 
@@ -259,7 +320,11 @@ impl Catalog {
     /// counting the keys that switch into other modes on the way.
     pub fn set_keybinds(&mut self, keybinds: &KeybindsVec, base: Option<InputMode>) -> bool {
         let base = base.unwrap_or(InputMode::Normal);
-        if self.keybinds.as_ref().is_some_and(|(k, b)| k == keybinds && *b == base) {
+        if self
+            .keybinds
+            .as_ref()
+            .is_some_and(|(k, b)| k == keybinds && *b == base)
+        {
             return false;
         }
         let in_mode = |mode: InputMode| {
@@ -291,7 +356,13 @@ impl Catalog {
             }
             e.hint = paths.iter().find_map(|(mode, path)| {
                 let (key, _) = in_mode(*mode).find(|(_, acts)| runs(acts, &e.plain))?;
-                Some(path.iter().cloned().chain([key.to_string()]).collect::<Vec<_>>().join(", "))
+                Some(
+                    path.iter()
+                        .cloned()
+                        .chain([key.to_string()])
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                )
             });
         }
         self.keybinds = Some((keybinds.clone(), base));
@@ -313,7 +384,11 @@ fn expand(sub: &Command) -> Vec<(Vec<String>, bool)> {
                 if needs || values.is_empty() {
                     return vec![(args, needs || required)];
                 }
-                let mut out = if required { Vec::new() } else { vec![(args.clone(), false)] };
+                let mut out = if required {
+                    Vec::new()
+                } else {
+                    vec![(args.clone(), false)]
+                };
                 out.extend(values.iter().map(|v| {
                     let mut a = args.clone();
                     a.push(v.clone());
@@ -324,7 +399,11 @@ fn expand(sub: &Command) -> Vec<(Vec<String>, bool)> {
             .collect();
     }
     for (_, flags) in VARIANTS.iter().filter(|(name, _)| *name == sub.get_name()) {
-        combos.extend(flags.iter().map(|f| (f.split(' ').map(String::from).collect(), false)));
+        combos.extend(
+            flags
+                .iter()
+                .map(|f| (f.split(' ').map(String::from).collect(), false)),
+        );
     }
     combos
 }
@@ -353,7 +432,11 @@ fn known_values(sub: &str, arg: &Arg) -> Vec<String> {
 /// "new-pane --direction right" reads as "new pane right".
 fn label(name: &str, args: &[String]) -> String {
     std::iter::once(name)
-        .chain(args.iter().map(String::as_str).filter(|a| *a != "--direction"))
+        .chain(
+            args.iter()
+                .map(String::as_str)
+                .filter(|a| *a != "--direction"),
+        )
         .map(|w| w.trim_start_matches('-').replace('-', " "))
         .collect::<Vec<_>>()
         .join(" ")
@@ -362,8 +445,10 @@ fn label(name: &str, args: &[String]) -> String {
 /// The user typed this flag themselves.
 fn given(arg: &Arg, words: &[String]) -> bool {
     words.iter().any(|w| {
-        arg.get_long().is_some_and(|l| w.strip_prefix("--").is_some_and(|f| f == l || f.starts_with(&format!("{l}="))))
-            || arg.get_short().is_some_and(|s| *w == format!("-{s}"))
+        arg.get_long().is_some_and(|l| {
+            w.strip_prefix("--")
+                .is_some_and(|f| f == l || f.starts_with(&format!("{l}=")))
+        }) || arg.get_short().is_some_and(|s| *w == format!("-{s}"))
     })
 }
 
@@ -383,7 +468,10 @@ fn clap_error(e: clap::Error) -> String {
     let text = e.render().to_string();
     let message = text.split("\n\n").next().unwrap_or_default();
     let message = message.split_whitespace().collect::<Vec<_>>().join(" ");
-    message.strip_prefix("error: ").unwrap_or(&message).to_string()
+    message
+        .strip_prefix("error: ")
+        .unwrap_or(&message)
+        .to_string()
 }
 
 /// Split a command line into words, shell style: quotes group words, and a
@@ -467,7 +555,10 @@ mod tests {
     use zellij_utils::data::{BareKey, KeyModifier, KeyWithModifier, PaneId};
 
     fn entry<'a>(c: &'a Catalog, command: &str) -> &'a Entry {
-        c.entries.iter().find(|e| e.command() == command).unwrap_or_else(|| panic!("no entry {command}"))
+        c.entries
+            .iter()
+            .find(|e| e.command() == command)
+            .unwrap_or_else(|| panic!("no entry {command}"))
     }
 
     fn run(c: &Catalog, name: &str, rest: &str, target: Target) -> Result<Vec<Action>, String> {
@@ -482,13 +573,24 @@ mod tests {
         assert!(!c.entries.iter().any(|e| SKIP.contains(&e.name.as_str())));
         assert_eq!(entry(&c, "move-focus left").label, "move focus left");
         // A required argument with known values only comes filled in
-        assert!(!c.entries.iter().any(|e| e.name == "move-focus" && e.args.is_empty()));
+        assert!(!c
+            .entries
+            .iter()
+            .any(|e| e.name == "move-focus" && e.args.is_empty()));
         // An optional one also comes bare
         assert!(entry(&c, "move-pane").args.is_empty());
         assert!(entry(&c, "resize increase").args.len() == 1);
         assert!(entry(&c, "resize decrease up").args.len() == 2);
-        assert!(entry(&c, "switch-mode locked").plain == vec![Action::SwitchToMode { input_mode: InputMode::Locked }]);
-        assert_eq!(entry(&c, "new-pane --direction right").label, "new pane right");
+        assert!(
+            entry(&c, "switch-mode locked").plain
+                == vec![Action::SwitchToMode {
+                    input_mode: InputMode::Locked
+                }]
+        );
+        assert_eq!(
+            entry(&c, "new-pane --direction right").label,
+            "new pane right"
+        );
         assert!(entry(&c, "rename-tab").needs_input);
         assert!(!entry(&c, "close-pane").needs_input);
         assert!(entry(&c, "override-layout").needs_input);
@@ -498,7 +600,16 @@ mod tests {
     fn every_ready_entry_runs_from_a_plugin() {
         let c = Catalog::new();
         for e in c.entries.iter().filter(|e| !e.needs_input) {
-            let actions = run(&c, &e.name, &e.args.join(" "), Target { pane: Some(3), tab: Some(1) }).unwrap_or_else(|err| panic!("{}: {err}", e.command()));
+            let actions = run(
+                &c,
+                &e.name,
+                &e.args.join(" "),
+                Target {
+                    pane: Some(3),
+                    tab: Some(1),
+                },
+            )
+            .unwrap_or_else(|err| panic!("{}: {err}", e.command()));
             for a in &actions {
                 assert_ne!(dispatch(a), Dispatch::Unsupported, "{}: {a:?}", e.command());
             }
@@ -508,83 +619,198 @@ mod tests {
     #[test]
     fn targets_the_pane_and_tab_where_plugins_can() {
         let c = Catalog::new();
-        let target = Target { pane: Some(7), tab: Some(2) };
+        let target = Target {
+            pane: Some(7),
+            tab: Some(2),
+        };
         let none = Target::default();
-        assert_eq!(run(&c, "toggle-pane-borderless", "", target).unwrap(), vec![Action::TogglePaneBorderless { pane_id: PaneId::Terminal(7) }]);
+        assert_eq!(
+            run(&c, "toggle-pane-borderless", "", target).unwrap(),
+            vec![Action::TogglePaneBorderless {
+                pane_id: PaneId::Terminal(7)
+            }]
+        );
         assert_eq!(
             run(&c, "toggle-pane-borderless", "--pane-id terminal_9", target).unwrap(),
-            vec![Action::TogglePaneBorderless { pane_id: PaneId::Terminal(9) }]
+            vec![Action::TogglePaneBorderless {
+                pane_id: PaneId::Terminal(9)
+            }]
         );
         assert!(run(&c, "toggle-pane-borderless", "", none).is_err());
-        assert_eq!(run(&c, "rename-tab", "api", target).unwrap(), vec![Action::RenameTabById { id: 2, name: "api".into() }]);
-        assert_eq!(run(&c, "close-tab", "", target).unwrap(), vec![Action::CloseTabById { id: 2 }]);
+        assert_eq!(
+            run(&c, "rename-tab", "api", target).unwrap(),
+            vec![Action::RenameTabById {
+                id: 2,
+                name: "api".into()
+            }]
+        );
+        assert_eq!(
+            run(&c, "close-tab", "", target).unwrap(),
+            vec![Action::CloseTabById { id: 2 }]
+        );
         assert_eq!(
             run(&c, "rename-pane", "web", target).unwrap(),
-            vec![Action::RenamePaneByPaneId { pane_id: Some(PaneId::Terminal(7)), name: b"web".to_vec() }]
+            vec![Action::RenamePaneByPaneId {
+                pane_id: Some(PaneId::Terminal(7)),
+                name: b"web".to_vec()
+            }]
         );
         // Plugins can't send the targeted form, so it runs on focus
-        assert_eq!(run(&c, "close-pane", "", target).unwrap(), run(&c, "close-pane", "", none).unwrap());
-        assert!(run(&c, "close-pane", "-p 7", none).unwrap().iter().all(|a| dispatch(a) == Dispatch::Unsupported));
+        assert_eq!(
+            run(&c, "close-pane", "", target).unwrap(),
+            run(&c, "close-pane", "", none).unwrap()
+        );
+        assert!(run(&c, "close-pane", "-p 7", none)
+            .unwrap()
+            .iter()
+            .all(|a| dispatch(a) == Dispatch::Unsupported));
         // new-pane's --pane-id needs --in-place, and means the pane to replace
-        assert!(run(&c, "new-pane", "", target).unwrap().iter().all(|a| dispatch(a) == Dispatch::RunAction));
+        assert!(run(&c, "new-pane", "", target)
+            .unwrap()
+            .iter()
+            .all(|a| dispatch(a) == Dispatch::RunAction));
     }
 
     #[test]
     fn free_text_needs_no_quotes() {
         let c = Catalog::new();
-        let target = Target { pane: None, tab: Some(1) };
+        let target = Target {
+            pane: None,
+            tab: Some(1),
+        };
         let quoted = run(&c, "rename-tab", "\"api server\"", target).unwrap();
-        assert_eq!(quoted, vec![Action::RenameTabById { id: 1, name: "api server".into() }]);
+        assert_eq!(
+            quoted,
+            vec![Action::RenameTabById {
+                id: 1,
+                name: "api server".into()
+            }]
+        );
         assert_eq!(run(&c, "rename-tab", "api server", target).unwrap(), quoted);
-        assert_eq!(run(&c, "rename-tab", "", target).unwrap_err(), "the following required arguments were not provided: <NAME>");
+        assert_eq!(
+            run(&c, "rename-tab", "", target).unwrap_err(),
+            "the following required arguments were not provided: <NAME>"
+        );
         assert!(run(&c, "move-focus", "sideways", target).is_err());
     }
 
     #[test]
     fn hints_come_from_keybindings() {
         let mut c = Catalog::new();
-        let key = |k: char, m: &[KeyModifier]| KeyWithModifier::new_with_modifiers(BareKey::Char(k), m.iter().copied().collect());
+        let key = |k: char, m: &[KeyModifier]| {
+            KeyWithModifier::new_with_modifiers(BareKey::Char(k), m.iter().copied().collect())
+        };
         let fullscreen = entry(&c, "toggle-fullscreen").plain.clone();
         let focus_left = entry(&c, "move-focus left").plain.clone();
         let mut pane_mode = focus_left.clone();
-        pane_mode.push(Action::SwitchToMode { input_mode: InputMode::Normal });
+        pane_mode.push(Action::SwitchToMode {
+            input_mode: InputMode::Normal,
+        });
         let keybinds: KeybindsVec = vec![
             (
                 InputMode::Normal,
                 vec![
                     (key('f', &[KeyModifier::Alt]), fullscreen),
-                    (key('p', &[KeyModifier::Ctrl]), vec![Action::SwitchToMode { input_mode: InputMode::Pane }]),
+                    (
+                        key('p', &[KeyModifier::Ctrl]),
+                        vec![Action::SwitchToMode {
+                            input_mode: InputMode::Pane,
+                        }],
+                    ),
                 ],
             ),
             (InputMode::Pane, vec![(key('h', &[]), pane_mode)]),
         ];
         assert!(c.set_keybinds(&keybinds, Some(InputMode::Normal)));
         assert!(!c.set_keybinds(&keybinds, Some(InputMode::Normal)));
-        assert_eq!(entry(&c, "toggle-fullscreen").hint.as_deref(), Some("Alt f"));
-        assert_eq!(entry(&c, "move-focus left").hint.as_deref(), Some("Ctrl p, h"));
-        assert_eq!(entry(&c, "switch-mode pane").hint.as_deref(), Some("Ctrl p"));
+        assert_eq!(
+            entry(&c, "toggle-fullscreen").hint.as_deref(),
+            Some("Alt f")
+        );
+        assert_eq!(
+            entry(&c, "move-focus left").hint.as_deref(),
+            Some("Ctrl p, h")
+        );
+        assert_eq!(
+            entry(&c, "switch-mode pane").hint.as_deref(),
+            Some("Ctrl p")
+        );
         assert_eq!(entry(&c, "close-pane").hint, None);
         // From locked, through normal
         let mut locked = keybinds.clone();
-        locked.push((InputMode::Locked, vec![(key('g', &[KeyModifier::Ctrl]), vec![Action::SwitchToMode { input_mode: InputMode::Normal }])]));
+        locked.push((
+            InputMode::Locked,
+            vec![(
+                key('g', &[KeyModifier::Ctrl]),
+                vec![Action::SwitchToMode {
+                    input_mode: InputMode::Normal,
+                }],
+            )],
+        ));
         assert!(c.set_keybinds(&locked, Some(InputMode::Locked)));
-        assert_eq!(entry(&c, "move-focus left").hint.as_deref(), Some("Ctrl g, Ctrl p, h"));
-        assert_eq!(entry(&c, "toggle-fullscreen").hint.as_deref(), Some("Ctrl g, Alt f"));
+        assert_eq!(
+            entry(&c, "move-focus left").hint.as_deref(),
+            Some("Ctrl g, Ctrl p, h")
+        );
+        assert_eq!(
+            entry(&c, "toggle-fullscreen").hint.as_deref(),
+            Some("Ctrl g, Alt f")
+        );
     }
 
     #[test]
     fn queries_pick_a_scope_or_a_command_line() {
         let c = Catalog::new();
         assert_eq!(parse_query("api", &c), Query::Search(Scope::All, "api"));
-        assert_eq!(parse_query("@api", &c), Query::Search(Scope::Sessions, "api"));
+        assert_eq!(
+            parse_query("@api", &c),
+            Query::Search(Scope::Sessions, "api")
+        );
         assert_eq!(parse_query("#2", &c), Query::Search(Scope::Tabs, "2"));
-        assert_eq!(parse_query(">rename", &c), Query::Search(Scope::Actions, "rename"));
-        assert_eq!(parse_query(">rename-tab", &c), Query::Search(Scope::Actions, "rename-tab"));
-        assert_eq!(parse_query(">rename-tab my tab", &c), Query::Command { name: "rename-tab", rest: "my tab" });
-        assert_eq!(parse_query(">move-focus ", &c), Query::Command { name: "move-focus", rest: "" });
-        assert_eq!(parse_query(">no such", &c), Query::Search(Scope::Actions, "no such"));
-        assert_eq!(c.find("move-focus", "left "), Some(c.entries.iter().position(|e| e.command() == "move-focus left").unwrap()));
-        assert_eq!(c.find("rename-tab", "api"), Some(c.entries.iter().position(|e| e.command() == "rename-tab").unwrap()));
+        assert_eq!(
+            parse_query(">rename", &c),
+            Query::Search(Scope::Actions, "rename")
+        );
+        assert_eq!(
+            parse_query(">rename-tab", &c),
+            Query::Search(Scope::Actions, "rename-tab")
+        );
+        assert_eq!(
+            parse_query(">rename-tab my tab", &c),
+            Query::Command {
+                name: "rename-tab",
+                rest: "my tab"
+            }
+        );
+        assert_eq!(
+            parse_query(">move-focus ", &c),
+            Query::Command {
+                name: "move-focus",
+                rest: ""
+            }
+        );
+        assert_eq!(
+            parse_query(">no such", &c),
+            Query::Search(Scope::Actions, "no such")
+        );
+        assert_eq!(
+            c.find("move-focus", "left "),
+            Some(
+                c.entries
+                    .iter()
+                    .position(|e| e.command() == "move-focus left")
+                    .unwrap()
+            )
+        );
+        assert_eq!(
+            c.find("rename-tab", "api"),
+            Some(
+                c.entries
+                    .iter()
+                    .position(|e| e.command() == "rename-tab")
+                    .unwrap()
+            )
+        );
         assert!(c.usage("rename-tab").contains("<NAME>"));
     }
 

@@ -1,7 +1,7 @@
 //! Session tracking, kept free of zellij-tile so it can be unit tested natively.
 
-use serde::{Deserialize, Serialize};
 use crate::tabs::TabNames;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use zellij_utils::data::InputMode;
 
@@ -142,7 +142,8 @@ impl Prompt {
         let kinds = self.kind == other.kind
             || matches!(
                 (self.kind, other.kind),
-                (PromptKind::Permission, PromptKind::Question) | (PromptKind::Question, PromptKind::Permission)
+                (PromptKind::Permission, PromptKind::Question)
+                    | (PromptKind::Question, PromptKind::Permission)
             );
         kinds
             && match (&self.tool, &other.tool) {
@@ -162,7 +163,10 @@ fn tools_match(a: &str, b: &str) -> bool {
 /// permission to use Bash".
 fn tool_in_message(message: &str) -> Option<String> {
     let rest = message.split_once("permission to use ")?.1;
-    let tool = rest.split_whitespace().next()?.trim_end_matches(|c: char| !c.is_alphanumeric() && c != '_');
+    let tool = rest
+        .split_whitespace()
+        .next()?
+        .trim_end_matches(|c: char| !c.is_alphanumeric() && c != '_');
     (!tool.is_empty()).then(|| tool.to_string())
 }
 
@@ -215,7 +219,7 @@ impl Tracker {
         if !ev.cwd.is_empty() {
             session.cwd = ev.cwd.clone();
         }
-        if !ev.tty.is_empty() {
+        if is_tty_path(&ev.tty) {
             session.tty = ev.tty.clone();
         }
         let late = ev.at > 0.0 && ev.at < session.latest_at;
@@ -229,7 +233,10 @@ impl Tracker {
             }
         }
 
-        let ends_call = matches!(ev.event.as_str(), "PostToolUse" | "PostToolUseFailure" | "PermissionDenied");
+        let ends_call = matches!(
+            ev.event.as_str(),
+            "PostToolUse" | "PostToolUseFailure" | "PermissionDenied"
+        );
         let tool_event = ends_call || ev.event == "PreToolUse";
         match (ev.event.as_str(), &ev.tool_use_id, &ev.tool) {
             ("PreToolUse", Some(id), Some(tool)) => session.calls.push(Call {
@@ -249,7 +256,11 @@ impl Tracker {
         // take the same agent's newest unfinished call of the same tool.
         let about = match ev.event.as_str() {
             "PermissionRequest" => ev.tool.as_ref().and_then(|tool| {
-                let c = session.calls.iter().rev().find(|c| &c.tool == tool && c.agent == ev.agent_id)?;
+                let c = session
+                    .calls
+                    .iter()
+                    .rev()
+                    .find(|c| &c.tool == tool && c.agent == ev.agent_id)?;
                 Some(c.id.clone())
             }),
             _ if tool_event => ev.tool_use_id.clone(),
@@ -264,7 +275,10 @@ impl Tracker {
             if tool_event && !new_prompt {
                 // A call with no id could be any, including the prompt's
                 let finished = ends_call && (about.is_none() || about == p.call);
-                let moved_on = ev.event == "PreToolUse" && about != p.call && ev.agent_id == p.agent && newer(ev.at, p.at);
+                let moved_on = ev.event == "PreToolUse"
+                    && about != p.call
+                    && ev.agent_id == p.agent
+                    && newer(ev.at, p.at);
                 if !finished && !moved_on {
                     return None;
                 }
@@ -278,7 +292,9 @@ impl Tracker {
             Status::NeedsInput(_) => Some(Prompt {
                 kind: match (ev.event.as_str(), ev.kind.as_deref()) {
                     ("PreToolUse", _) => PromptKind::Question,
-                    ("PermissionRequest", _) | (_, Some("permission_prompt")) => PromptKind::Permission,
+                    ("PermissionRequest", _) | (_, Some("permission_prompt")) => {
+                        PromptKind::Permission
+                    }
                     (_, Some("agent_needs_input")) => PromptKind::Agent,
                     _ => PromptKind::Elicitation,
                 },
@@ -295,12 +311,17 @@ impl Tracker {
         let same_prompt = match (&prev, &session.prompt, &candidate) {
             (Some(Status::NeedsInput(_)), Some(old), Some(new)) => old.same(new),
             // Saved by a version that didn't record prompts
-            (Some(Status::NeedsInput(old)), None, Some(_)) => ev.event == "Notification" || *old == next_message(&next),
+            (Some(Status::NeedsInput(old)), None, Some(_)) => {
+                ev.event == "Notification" || *old == next_message(&next)
+            }
             _ => false,
         };
         let changed = match &prev {
             None => true,
-            Some(p) => std::mem::discriminant(p) != std::mem::discriminant(&next) || (candidate.is_some() && !same_prompt),
+            Some(p) => {
+                std::mem::discriminant(p) != std::mem::discriminant(&next)
+                    || (candidate.is_some() && !same_prompt)
+            }
         };
         if changed {
             session.since = now;
@@ -327,7 +348,9 @@ impl Tracker {
             // tool a Notification couldn't
             let old = session.prompt.take();
             session.prompt = Some(match old {
-                Some(old) if ev.event == "PermissionRequest" && old.kind == PromptKind::Permission => {
+                Some(old)
+                    if ev.event == "PermissionRequest" && old.kind == PromptKind::Permission =>
+                {
                     session.status = next.clone();
                     Prompt {
                         call: new.call.or(old.call),
@@ -410,8 +433,19 @@ impl Tracker {
     }
 }
 
+/// The plugin writes notifications to the session's tty, so take only the
+/// device paths the hook sends, never a path to an ordinary file.
+fn is_tty_path(path: &str) -> bool {
+    path.strip_prefix("/dev/").is_some_and(|rest| {
+        !rest.is_empty() && rest.chars().all(|c| c.is_ascii_alphanumeric() || c == '/')
+    })
+}
+
 fn is_boundary(event: &str) -> bool {
-    matches!(event, "UserPromptSubmit" | "Stop" | "StopFailure" | "SessionStart" | "SessionEnd")
+    matches!(
+        event,
+        "UserPromptSubmit" | "Stop" | "StopFailure" | "SessionStart" | "SessionEnd"
+    )
 }
 
 /// The status an event moves its session to, or None for events that say
@@ -422,7 +456,9 @@ fn next_status(ev: &HookEvent) -> Option<Status> {
         "SessionStart" if ev.source.as_deref() == Some("compact") => return None,
         "SessionStart" => Status::Ready,
         // Auto mode denying a call ends it like a failure; Claude carries on
-        "UserPromptSubmit" | "PostToolUse" | "PostToolUseFailure" | "PermissionDenied" => Status::Working(None),
+        "UserPromptSubmit" | "PostToolUse" | "PostToolUseFailure" | "PermissionDenied" => {
+            Status::Working(None)
+        }
         // These tools exist to wait on the user, and fire no permission prompt
         "PreToolUse" => match ev.tool.as_deref() {
             Some("AskUserQuestion") => Status::NeedsInput("Has a question".into()),
@@ -434,9 +470,12 @@ fn next_status(ev: &HookEvent) -> Option<Status> {
         "Notification" => match ev.kind.as_deref() {
             // A reminder that it's still idle; Stop already alerted
             Some("idle_prompt") => Status::Ready,
-            Some("permission_prompt" | "elicitation_dialog" | "elicitation_url_dialog" | "agent_needs_input") => {
-                Status::NeedsInput(ev.message.clone().unwrap_or_default())
-            }
+            Some(
+                "permission_prompt"
+                | "elicitation_dialog"
+                | "elicitation_url_dialog"
+                | "agent_needs_input",
+            ) => Status::NeedsInput(ev.message.clone().unwrap_or_default()),
             // The user answered an MCP server's question
             Some("elicitation_complete" | "elicitation_response") => Status::Working(None),
             // auth_success, agent_completed, quota_* and anything newer
@@ -614,7 +653,7 @@ mod tests {
         HookEvent {
             event: event.into(),
             pane: 3,
-            cwd: "/Users/me/Developer/periscope".into(),
+            cwd: "/Users/me/Developer/my-app".into(),
             ..Default::default()
         }
     }
@@ -625,7 +664,7 @@ mod tests {
         assert_eq!(t.apply(ev("SessionStart"), 0), None);
         assert_eq!(t.apply(ev("UserPromptSubmit"), 1), None);
         let alert = t.apply(ev("Stop"), 2).unwrap();
-        assert_eq!(alert.title, "Claude · periscope");
+        assert_eq!(alert.title, "Claude · my-app");
         assert_eq!(alert.message, "Ready for input");
         // The idle reminder doesn't alert again
         let mut idle = ev("Notification");
@@ -645,7 +684,10 @@ mod tests {
         note.kind = Some("permission_prompt".into());
         note.message = Some("Claude needs your permission to use Bash".into());
         assert_eq!(t.apply(note, 2), None);
-        assert_eq!(t.get(3).unwrap().status, Status::NeedsInput("Wants to use Bash".into()));
+        assert_eq!(
+            t.get(3).unwrap().status,
+            Status::NeedsInput("Wants to use Bash".into())
+        );
         // Approving runs the tool, which returns it to work
         t.apply(ev("PostToolUse"), 3);
         assert_eq!(t.get(3).unwrap().status, Status::Working(None));
@@ -667,7 +709,12 @@ mod tests {
     fn only_waiting_notifications_need_input() {
         let mut t = Tracker::default();
         t.apply(ev("UserPromptSubmit"), 0);
-        for kind in ["auth_success", "agent_completed", "quota_auto_resume_fired", "something_new"] {
+        for kind in [
+            "auth_success",
+            "agent_completed",
+            "quota_auto_resume_fired",
+            "something_new",
+        ] {
             let mut note = ev("Notification");
             note.kind = Some(kind.into());
             assert_eq!(t.apply(note, 1), None, "{kind}");
@@ -687,7 +734,10 @@ mod tests {
     fn stop_failure_alerts() {
         let mut t = Tracker::default();
         t.apply(ev("UserPromptSubmit"), 0);
-        assert_eq!(t.apply(ev("StopFailure"), 1).unwrap().message, "Stopped on an error");
+        assert_eq!(
+            t.apply(ev("StopFailure"), 1).unwrap().message,
+            "Stopped on an error"
+        );
         assert_eq!(t.get(3).unwrap().status, Status::Ready);
     }
 
@@ -730,7 +780,12 @@ mod tests {
     #[test]
     fn sorts_by_urgency_then_tab() {
         let mut t = Tracker::default();
-        for (pane, event) in [(1, "UserPromptSubmit"), (2, "Stop"), (3, "Stop"), (4, "PermissionRequest")] {
+        for (pane, event) in [
+            (1, "UserPromptSubmit"),
+            (2, "Stop"),
+            (3, "Stop"),
+            (4, "PermissionRequest"),
+        ] {
             let mut e = ev(event);
             e.pane = pane;
             t.apply(e, 0);
@@ -756,8 +811,20 @@ mod tests {
         let order: Vec<u32> = t.sorted(|_| None).iter().map(|s| s.pane).collect();
         assert_eq!(order, vec![3, 2, 1]);
         // A new turn finishing makes it unseen again
-        t.apply(HookEvent { pane: 1, ..ev("UserPromptSubmit") }, 1);
-        t.apply(HookEvent { pane: 1, ..ev("Stop") }, 2);
+        t.apply(
+            HookEvent {
+                pane: 1,
+                ..ev("UserPromptSubmit")
+            },
+            1,
+        );
+        t.apply(
+            HookEvent {
+                pane: 1,
+                ..ev("Stop")
+            },
+            2,
+        );
         assert!(!t.get(1).unwrap().seen);
     }
 
@@ -772,18 +839,26 @@ mod tests {
     #[test]
     fn other_tools_dont_answer_a_prompt() {
         let at = |at: f64, e: HookEvent| HookEvent { at, ..e };
-        let sub = |e: HookEvent| HookEvent { agent_id: Some("a1".into()), ..e };
+        let sub = |e: HookEvent| HookEvent {
+            agent_id: Some("a1".into()),
+            ..e
+        };
         let mut t = Tracker::default();
         t.apply(at(1.0, ev("UserPromptSubmit")), 0);
         t.apply(at(2.0, tool_ev("PreToolUse", "Bash", Some("b1"))), 1);
         t.apply(at(2.0, tool_ev("PreToolUse", "Read", Some("r1"))), 1);
         // PermissionRequest never has an id; it finds the unfinished Bash call
-        assert!(t.apply(at(3.0, tool_ev("PermissionRequest", "Bash", None)), 2).is_some());
+        assert!(t
+            .apply(at(3.0, tool_ev("PermissionRequest", "Bash", None)), 2)
+            .is_some());
         // A parallel call finishing, and a subagent's new call, don't answer it
         t.apply(at(4.0, tool_ev("PostToolUse", "Read", Some("r1"))), 3);
         t.apply(at(4.0, sub(tool_ev("PreToolUse", "Grep", Some("g1")))), 3);
         t.apply(at(4.5, sub(tool_ev("PostToolUse", "Grep", Some("g1")))), 3);
-        assert_eq!(t.get(3).unwrap().status, Status::NeedsInput("Wants to use Bash".into()));
+        assert_eq!(
+            t.get(3).unwrap().status,
+            Status::NeedsInput("Wants to use Bash".into())
+        );
         assert_eq!(t.get(3).unwrap().since, 2);
         // Approving runs Bash to completion
         t.apply(at(5.0, tool_ev("PostToolUse", "Bash", Some("b1"))), 4);
@@ -803,7 +878,10 @@ mod tests {
         assert!(matches!(t.get(3).unwrap().status, Status::NeedsInput(_)));
         // Denied: no event for b1, but Claude starts a new call
         t.apply(at(4.0, tool_ev("PreToolUse", "Edit", Some("e1"))), 4);
-        assert_eq!(t.get(3).unwrap().status, Status::Working(Some("Edit".into())));
+        assert_eq!(
+            t.get(3).unwrap().status,
+            Status::Working(Some("Edit".into()))
+        );
         // b1 never finished; it isn't left to name the status
         t.apply(at(5.0, tool_ev("PostToolUse", "Edit", Some("e1"))), 5);
         t.apply(at(5.0, tool_ev("PostToolUse", "WebFetch", Some("w1"))), 5);
@@ -820,8 +898,17 @@ mod tests {
         ask.message = Some("Server wants a token".into());
         assert!(t.apply(ask, 2).is_some());
         // A subagent's tool finishing doesn't close the dialog
-        t.apply(HookEvent { agent_id: Some("a1".into()), ..tool_ev("PostToolUse", "Read", Some("r1")) }, 3);
-        assert_eq!(t.get(3).unwrap().status, Status::NeedsInput("Server wants a token".into()));
+        t.apply(
+            HookEvent {
+                agent_id: Some("a1".into()),
+                ..tool_ev("PostToolUse", "Read", Some("r1"))
+            },
+            3,
+        );
+        assert_eq!(
+            t.get(3).unwrap().status,
+            Status::NeedsInput("Server wants a token".into())
+        );
         // The MCP call it belongs to finishing does
         t.apply(tool_ev("PostToolUse", "mcp__vault__login", Some("m1")), 4);
         assert_eq!(t.get(3).unwrap().status, Status::Working(None));
@@ -839,13 +926,21 @@ mod tests {
         };
         // A subagent's permission prompt, named by its Notification
         let alert = t.apply(note("Claude needs your permission to use Bash"), 2);
-        assert_eq!(alert.unwrap().message, "Claude needs your permission to use Bash");
+        assert_eq!(
+            alert.unwrap().message,
+            "Claude needs your permission to use Bash"
+        );
         // Its own Notification again doesn't
-        assert_eq!(t.apply(note("Claude needs your permission to use Bash"), 3), None);
+        assert_eq!(
+            t.apply(note("Claude needs your permission to use Bash"), 3),
+            None
+        );
         // Nor does one that can't tell
         assert_eq!(t.apply(note("Claude needs your permission"), 3), None);
         // A PermissionRequest for another tool, with no call to tie it to, does
-        assert!(t.apply(tool_ev("PermissionRequest", "Edit", None), 4).is_some());
+        assert!(t
+            .apply(tool_ev("PermissionRequest", "Edit", None), 4)
+            .is_some());
     }
 
     #[test]
@@ -877,9 +972,17 @@ mod tests {
         // ExitPlanMode fires PreToolUse, then PermissionRequest
         let mut t = Tracker::default();
         t.apply(ev("UserPromptSubmit"), 0);
-        assert!(t.apply(tool_ev("PreToolUse", "ExitPlanMode", Some("p1")), 1).is_some());
-        assert_eq!(t.apply(tool_ev("PermissionRequest", "ExitPlanMode", None), 2), None);
-        assert_eq!(t.get(3).unwrap().status, Status::NeedsInput("Plan ready for review".into()));
+        assert!(t
+            .apply(tool_ev("PreToolUse", "ExitPlanMode", Some("p1")), 1)
+            .is_some());
+        assert_eq!(
+            t.apply(tool_ev("PermissionRequest", "ExitPlanMode", None), 2),
+            None
+        );
+        assert_eq!(
+            t.get(3).unwrap().status,
+            Status::NeedsInput("Plan ready for review".into())
+        );
 
         // A Notification first, then PermissionRequest names the tool
         let mut t = Tracker::default();
@@ -887,10 +990,19 @@ mod tests {
         note.kind = Some("permission_prompt".into());
         note.message = Some("Claude needs your permission".into());
         assert!(t.apply(note, 1).is_some());
-        assert_eq!(t.apply(tool_ev("PermissionRequest", "Bash", Some("b1")), 2), None);
-        assert_eq!(t.get(3).unwrap().status, Status::NeedsInput("Wants to use Bash".into()));
+        assert_eq!(
+            t.apply(tool_ev("PermissionRequest", "Bash", Some("b1")), 2),
+            None
+        );
+        assert_eq!(
+            t.get(3).unwrap().status,
+            Status::NeedsInput("Wants to use Bash".into())
+        );
         t.apply(tool_ev("PostToolUse", "Read", Some("r1")), 3);
-        assert_eq!(t.get(3).unwrap().status, Status::NeedsInput("Wants to use Bash".into()));
+        assert_eq!(
+            t.get(3).unwrap().status,
+            Status::NeedsInput("Wants to use Bash".into())
+        );
     }
 
     #[test]
@@ -913,21 +1025,74 @@ mod tests {
         assert!(t.get(3).is_some());
         // Parallel tools' hooks overlap, so a slightly older prompt still counts
         t.apply(at("UserPromptSubmit", 9.0), 0);
-        t.apply(HookEvent { at: 9.2, ..tool_ev("PostToolUse", "Read", Some("r1")) }, 0);
-        assert!(t.apply(HookEvent { at: 9.1, ..tool_ev("PermissionRequest", "Bash", None) }, 0).is_some());
+        t.apply(
+            HookEvent {
+                at: 9.2,
+                ..tool_ev("PostToolUse", "Read", Some("r1"))
+            },
+            0,
+        );
+        assert!(t
+            .apply(
+                HookEvent {
+                    at: 9.1,
+                    ..tool_ev("PermissionRequest", "Bash", None)
+                },
+                0
+            )
+            .is_some());
     }
 
     #[test]
     fn late_boundaries_keep_newer_status() {
         let mut t = Tracker::default();
-        t.apply(HookEvent { at: 1.0, ..ev("Stop") }, 0);
+        t.apply(
+            HookEvent {
+                at: 1.0,
+                ..ev("Stop")
+            },
+            0,
+        );
         // The prompt's pipe lands after the question it led to
-        t.apply(HookEvent { at: 3.0, ..tool_ev("PreToolUse", "AskUserQuestion", Some("q1")) }, 0);
-        assert_eq!(t.apply(HookEvent { at: 2.0, ..ev("UserPromptSubmit") }, 0), None);
-        assert_eq!(t.get(3).unwrap().status, Status::NeedsInput("Has a question".into()));
+        t.apply(
+            HookEvent {
+                at: 3.0,
+                ..tool_ev("PreToolUse", "AskUserQuestion", Some("q1"))
+            },
+            0,
+        );
+        assert_eq!(
+            t.apply(
+                HookEvent {
+                    at: 2.0,
+                    ..ev("UserPromptSubmit")
+                },
+                0
+            ),
+            None
+        );
+        assert_eq!(
+            t.get(3).unwrap().status,
+            Status::NeedsInput("Has a question".into())
+        );
         // It still marks the boundary, so older events stay dropped
-        assert_eq!(t.apply(HookEvent { at: 1.5, ..ev("PostToolUse") }, 0), None);
-        t.apply(HookEvent { at: 4.0, ..tool_ev("PostToolUse", "AskUserQuestion", Some("q1")) }, 0);
+        assert_eq!(
+            t.apply(
+                HookEvent {
+                    at: 1.5,
+                    ..ev("PostToolUse")
+                },
+                0
+            ),
+            None
+        );
+        t.apply(
+            HookEvent {
+                at: 4.0,
+                ..tool_ev("PostToolUse", "AskUserQuestion", Some("q1"))
+            },
+            0,
+        );
         assert_eq!(t.get(3).unwrap().status, Status::Working(None));
     }
 
@@ -938,15 +1103,27 @@ mod tests {
         req.tool = Some("Bash".into());
         req.tty = "/dev/ttys004".into();
         t.apply(req, 5);
-        t.apply(HookEvent { pane: 4, ..ev("Stop") }, 6);
+        t.apply(
+            HookEvent {
+                pane: 4,
+                ..ev("Stop")
+            },
+            6,
+        );
         t.mark_seen(4);
         let mut tabs = TabNames::default();
         tabs.wrote(2, "api", &["! api".into()]);
-        let palette = Palette { recent: vec!["close-pane".into()], base_mode: Some(InputMode::Locked) };
+        let palette = Palette {
+            recent: vec!["close-pane".into()],
+            base_mode: Some(InputMode::Locked),
+        };
         let (r, tabs, restored) = restore(&save(&t, &tabs, &palette));
         let s = r.get(3).unwrap();
         assert_eq!(s.status, Status::NeedsInput("Wants to use Bash".into()));
-        assert_eq!((s.since, s.tty.as_str(), s.project()), (5, "/dev/ttys004", "periscope"));
+        assert_eq!(
+            (s.since, s.tty.as_str(), s.project()),
+            (5, "/dev/ttys004", "my-app")
+        );
         assert!(r.get(4).unwrap().seen);
         assert_eq!(tabs.base(2, "! api"), "api");
         assert_eq!(restored, palette);
@@ -956,23 +1133,73 @@ mod tests {
         assert!(restore("not json").0.is_empty());
         // A session that ended stays ended through a reload
         let mut t = Tracker::default();
-        t.apply(HookEvent { at: 2.0, ..ev("SessionEnd") }, 0);
+        t.apply(
+            HookEvent {
+                at: 2.0,
+                ..ev("SessionEnd")
+            },
+            0,
+        );
         let (mut r, ..) = restore(&save(&t, &TabNames::default(), &Palette::default()));
-        r.apply(HookEvent { at: 1.0, ..ev("PostToolUse") }, 0);
+        r.apply(
+            HookEvent {
+                at: 1.0,
+                ..ev("PostToolUse")
+            },
+            0,
+        );
         assert!(r.get(3).is_none());
     }
 
     #[test]
+    fn keeps_only_device_tty_paths() {
+        let mut t = Tracker::default();
+        for tty in [
+            "/dev/ttys004",
+            "/etc/passwd",
+            "/dev/../etc/passwd",
+            "/dev/",
+            "ttys004",
+        ] {
+            t.apply(
+                HookEvent {
+                    tty: tty.into(),
+                    ..ev("SessionStart")
+                },
+                0,
+            );
+        }
+        assert_eq!(t.get(3).unwrap().tty, "/dev/ttys004");
+        t.apply(
+            HookEvent {
+                tty: "/dev/pts/7".into(),
+                ..ev("Stop")
+            },
+            0,
+        );
+        assert_eq!(t.get(3).unwrap().tty, "/dev/pts/7");
+    }
+
+    #[test]
     fn fuzzy_matches_subsequences_per_field() {
-        let fields = ["periscope", "2 api", "needs input"];
-        assert_eq!(fuzzy_match("", &fields), Some((0, vec![vec![], vec![], vec![]])));
-        assert_eq!(fuzzy_match("prs", &fields).unwrap().1, vec![vec![0, 2, 4], vec![], vec![]]);
-        assert_eq!(fuzzy_match("PERI", &fields).unwrap().1[0], vec![0, 1, 2, 3]);
+        let fields = ["dashboard", "2 api", "needs input"];
+        assert_eq!(
+            fuzzy_match("", &fields),
+            Some((0, vec![vec![], vec![], vec![]]))
+        );
+        assert_eq!(
+            fuzzy_match("dsb", &fields).unwrap().1,
+            vec![vec![0, 2, 4], vec![], vec![]]
+        );
+        assert_eq!(fuzzy_match("DASH", &fields).unwrap().1[0], vec![0, 1, 2, 3]);
         // Every term must match, each in whichever field fits best
-        assert_eq!(fuzzy_match("peri need", &fields).unwrap().1[2], vec![0, 1, 2, 3]);
-        assert_eq!(fuzzy_match("peri zzz", &fields), None);
+        assert_eq!(
+            fuzzy_match("dash need", &fields).unwrap().1[2],
+            vec![0, 1, 2, 3]
+        );
+        assert_eq!(fuzzy_match("dash zzz", &fields), None);
         // Terms don't match across fields
-        assert_eq!(fuzzy_match("scopeapi", &fields), None);
+        assert_eq!(fuzzy_match("boardapi", &fields), None);
     }
 
     #[test]
@@ -981,7 +1208,10 @@ mod tests {
         assert!(score("api", "api-gateway") > score("api", "a-p-i"));
         assert!(score("gw", "api-gateway") < score("gw", "api-gw"));
         // A later, tighter match beats the first greedy one
-        assert_eq!(fuzzy_match("rad", &["r-a-radar"]).unwrap().1[0], vec![4, 5, 6]);
+        assert_eq!(
+            fuzzy_match("rad", &["r-a-radar"]).unwrap().1[0],
+            vec![4, 5, 6]
+        );
     }
 
     #[test]

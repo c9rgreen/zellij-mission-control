@@ -31,11 +31,11 @@ impl IconSet {
     /// picks the frame, and the other badges have only the one.
     pub fn icon(self, badge: Badge, lit: bool) -> char {
         match (self, badge) {
-            (IconSet::Nerd, Badge::NeedsInput) => '\u{f071}',  // nf-fa-warning
+            (IconSet::Nerd, Badge::NeedsInput) => '\u{f071}', // nf-fa-warning
             (IconSet::Nerd, Badge::ReadyUnseen) => '\u{f058}', // nf-fa-check_circle
             (IconSet::Nerd, Badge::Working) if lit => '\u{f192}', // nf-fa-circle_dot
-            (IconSet::Nerd, Badge::Working) => '\u{f10c}',     // nf-fa-circle_o
-            (IconSet::Nerd, Badge::ReadySeen) => '\u{f10c}',   // nf-fa-circle_o
+            (IconSet::Nerd, Badge::Working) => '\u{f10c}',    // nf-fa-circle_o
+            (IconSet::Nerd, Badge::ReadySeen) => '\u{f10c}',  // nf-fa-circle_o
             (IconSet::Unicode, Badge::NeedsInput) => '!',
             (IconSet::Unicode, Badge::ReadyUnseen) => '✓',
             (IconSet::Unicode, Badge::Working) => '◔',
@@ -71,13 +71,18 @@ pub fn tab_name(base: &str, badges: &[Badge], icons: IconSet, lit: bool) -> Stri
     if badges.is_empty() {
         return base.to_string();
     }
-    let marks: Vec<String> = badges.iter().map(|b| icons.icon(*b, lit).to_string()).collect();
+    let marks: Vec<String> = badges
+        .iter()
+        .map(|b| icons.icon(*b, lit).to_string())
+        .collect();
     format!("{} {base}", marks.join(" "))
 }
 
 /// Nerd Font icons the plugin has put in tab names, including the cog, robot,
 /// spinner and user gear earlier versions used for Working.
-const NERD_ICONS: [char; 8] = ['\u{f071}', '\u{f058}', '\u{f192}', '\u{f10c}', '\u{f013}', '\u{ee0d}', '\u{f110}', '\u{edc8}'];
+const NERD_ICONS: [char; 8] = [
+    '\u{f071}', '\u{f058}', '\u{f192}', '\u{f10c}', '\u{f013}', '\u{ee0d}', '\u{f110}', '\u{edc8}',
+];
 
 /// A name without the Nerd Font icons at its front, for tabs named before
 /// the plugin kept records (or whose records were lost). Nobody types these glyphs, so stripping them is safe;
@@ -222,11 +227,19 @@ impl TabNames {
 mod tests {
     use super::*;
 
-    const ALL: [Badge; 4] = [Badge::NeedsInput, Badge::ReadyUnseen, Badge::Working, Badge::ReadySeen];
+    const ALL: [Badge; 4] = [
+        Badge::NeedsInput,
+        Badge::ReadyUnseen,
+        Badge::Working,
+        Badge::ReadySeen,
+    ];
 
     #[test]
     fn icons_per_set() {
-        assert_eq!(tab_name("api", &ALL, IconSet::Nerd, true), "\u{f071} \u{f058} \u{f192} \u{f10c} api");
+        assert_eq!(
+            tab_name("api", &ALL, IconSet::Nerd, true),
+            "\u{f071} \u{f058} \u{f192} \u{f10c} api"
+        );
         assert_eq!(tab_name("api", &ALL, IconSet::Unicode, true), "! ✓ ◔ ○ api");
         assert_eq!(tab_name("api", &ALL, IconSet::Ascii, true), "! * ~ . api");
         assert_eq!(tab_name("api", &[], IconSet::Ascii, true), "api");
@@ -236,9 +249,13 @@ mod tests {
 
     #[test]
     fn working_blinks_in_nerd_icons() {
-        assert_eq!(tab_name("api", &[Badge::Working], IconSet::Nerd, false), "\u{f10c} api");
+        assert_eq!(
+            tab_name("api", &[Badge::Working], IconSet::Nerd, false),
+            "\u{f10c} api"
+        );
         assert_eq!(tab_name("api", &ALL, IconSet::Ascii, false), "! * ~ . api");
-        let frames = [true, false].map(|lit| tab_name("api", &[Badge::Working], IconSet::Nerd, lit));
+        let frames =
+            [true, false].map(|lit| tab_name("api", &[Badge::Working], IconSet::Nerd, lit));
         let mut t = TabNames::default();
         assert!(t.wrote(1, "api", &frames));
         // Both frames are the plugin's, and blinking between them changes nothing

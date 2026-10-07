@@ -166,7 +166,8 @@ impl Line {
         let n = s.chars().count();
         let start = self.len;
         self.text.push_str(s);
-        self.text.extend(std::iter::repeat_n(' ', width.saturating_sub(n)));
+        self.text
+            .extend(std::iter::repeat_n(' ', width.saturating_sub(n)));
         self.len += n.max(width);
         start..start + n
     }
@@ -187,7 +188,9 @@ impl Line {
         let mut start = 0;
         while start < chars.len() {
             let matched = hit(start);
-            let end = (start..chars.len()).find(|&i| hit(i) != matched).unwrap_or(chars.len());
+            let end = (start..chars.len())
+                .find(|&i| hit(i) != matched)
+                .unwrap_or(chars.len());
             let piece = self.piece(&chars, start..end);
             let piece = match (matched, selected) {
                 (true, true) => piece.opaque(),
@@ -205,15 +208,23 @@ impl Line {
             let (a, b) = (r.start.max(range.start), r.end.min(range.end));
             (a < b).then(|| a - range.start..b - range.start)
         };
-        let hits = self.hits.iter().filter(|h| range.contains(h)).map(|h| h - range.start).collect();
-        let mut text = Text::new(chars[range.clone()].iter().collect::<String>()).color_indices(3, hits);
+        let hits = self
+            .hits
+            .iter()
+            .filter(|h| range.contains(h))
+            .map(|h| h - range.start)
+            .collect();
+        let mut text =
+            Text::new(chars[range.clone()].iter().collect::<String>()).color_indices(3, hits);
         for r in self.dim.iter().filter_map(clip) {
             text = text.dim_range(r);
         }
         for r in self.color.iter().filter_map(clip) {
             text = text.color_range(2, r);
         }
-        let Some((r, badge)) = &self.glyph else { return text };
+        let Some((r, badge)) = &self.glyph else {
+            return text;
+        };
         let Some(r) = clip(r) else { return text };
         match badge {
             Some(Badge::NeedsInput) => text.error_color_range(r),
@@ -247,7 +258,7 @@ fn tick() {
 /// Whether Working icons show their lit frame: on even seconds, rounding
 /// so a tick that fires a little early still lands in its second.
 fn lit_at(ms: u64) -> bool {
-    (ms + 500) / 1000 % 2 == 0
+    ((ms + 500) / 1000).is_multiple_of(2)
 }
 
 /// Keep control characters from ending an escape sequence early.
@@ -308,7 +319,9 @@ impl ZellijPlugin for Dashboard {
                 let layout = |t: &TabInfo| (t.position, t.tab_id);
                 // The first TabUpdate has nothing to compare; panes_current
                 // already waits for a PaneUpdate if none has come
-                if !self.tabs.is_empty() && !tabs.iter().map(layout).eq(self.tabs.iter().map(layout)) {
+                if !self.tabs.is_empty()
+                    && !tabs.iter().map(layout).eq(self.tabs.iter().map(layout))
+                {
                     self.panes_current = false;
                 }
                 self.active_tab = tabs.iter().find(|t| t.active).map(|t| t.position);
@@ -335,19 +348,26 @@ impl ZellijPlugin for Dashboard {
                     self.palette.base_mode = mode.base_mode;
                     self.dirty = true;
                 }
-                self.catalog.set_keybinds(&self.keybinds, self.palette.base_mode) && self.own_visible()
+                self.catalog
+                    .set_keybinds(&self.keybinds, self.palette.base_mode)
+                    && self.own_visible()
             }
             // Sent once subscribed and after the config changes; ModeUpdate
             // leaves keybindings out once a plugin asks for these
             Event::InitialKeybinds(keybinds) => {
                 self.keybinds = keybinds;
-                self.catalog.set_keybinds(&self.keybinds, self.palette.base_mode) && self.own_visible()
+                self.catalog
+                    .set_keybinds(&self.keybinds, self.palette.base_mode)
+                    && self.own_visible()
             }
             Event::Key(key) => self.on_key(key),
             Event::RunCommandResult(code, _, stderr, _) => {
                 // Lands in the Zellij log; there's nowhere better to surface it
                 if code != Some(0) {
-                    eprintln!("mission-control: notify exited {code:?}: {}", String::from_utf8_lossy(&stderr));
+                    eprintln!(
+                        "mission-control: notify exited {code:?}: {}",
+                        String::from_utf8_lossy(&stderr)
+                    );
                 }
                 false
             }
@@ -408,31 +428,55 @@ impl ZellijPlugin for Dashboard {
         }
         let fit = rows.saturating_sub(4).max(1);
         // Scroll just enough to keep the selection in view
-        let pos = at.and_then(|a| lines.iter().position(|l| *l == Some(a))).unwrap_or(0);
-        let scroll = self.scroll.min(pos).max((pos + 1).saturating_sub(fit)).min(lines.len().saturating_sub(fit));
+        let pos = at
+            .and_then(|a| lines.iter().position(|l| *l == Some(a)))
+            .unwrap_or(0);
+        let scroll = self
+            .scroll
+            .min(pos)
+            .max((pos + 1).saturating_sub(fit))
+            .min(lines.len().saturating_sub(fit));
 
         let prompt = if self.query.is_empty() {
             Text::new("/ search · @ sessions · # tabs · > actions").dim_range(2..)
         } else {
             Text::new(format!("/ {}", self.query))
         };
-        print_text_with_coordinates(prompt.color_range(2, ..1), 1, 0, Some(cols.saturating_sub(2)), None);
+        print_text_with_coordinates(
+            prompt.color_range(2, ..1),
+            1,
+            0,
+            Some(cols.saturating_sub(2)),
+            None,
+        );
 
         let query = parse_query(&self.query, &self.catalog);
         if listing.items.is_empty() {
             let msg = match query {
-                Query::Search(Scope::All | Scope::Sessions, text) if text.trim().is_empty() && self.tracker.is_empty() => {
+                Query::Search(Scope::All | Scope::Sessions, text)
+                    if text.trim().is_empty() && self.tracker.is_empty() =>
+                {
                     "No Claude sessions in this Zellij session"
                 }
                 _ => "No matches",
             };
-            print_text_with_coordinates(Text::new(msg).dim_all(), 1, 2, Some(cols.saturating_sub(2)), None);
+            print_text_with_coordinates(
+                Text::new(msg).dim_all(),
+                1,
+                2,
+                Some(cols.saturating_sub(2)),
+                None,
+            );
         }
         // Session cells line up with each other
         let mut widths = [0; 3];
         for item in &listing.items {
             if let Kind::Session { session, tab } = &item.kind {
-                let cells = [session.project().chars().count(), tab.chars().count(), session.status.label().chars().count()];
+                let cells = [
+                    session.project().chars().count(),
+                    tab.chars().count(),
+                    session.status.label().chars().count(),
+                ];
                 for (w, n) in widths.iter_mut().zip(cells) {
                     *w = (*w).max(n);
                 }
@@ -441,10 +485,20 @@ impl ZellijPlugin for Dashboard {
         let now = now();
         for (y, line) in lines.iter().skip(scroll).take(fit).enumerate() {
             match line {
-                None => print_text_with_coordinates(Text::new(" recent").dim_all(), 0, 2 + y, Some(cols), None),
+                None => print_text_with_coordinates(
+                    Text::new(" recent").dim_all(),
+                    0,
+                    2 + y,
+                    Some(cols),
+                    None,
+                ),
                 Some(i) => {
                     let item = &listing.items[*i];
-                    self.line(item, widths, now, cols).print(2 + y, current == Some(item.pick), cols);
+                    self.line(item, widths, now, cols).print(
+                        2 + y,
+                        current == Some(item.pick),
+                        cols,
+                    );
                 }
             }
         }
@@ -460,7 +514,13 @@ impl ZellijPlugin for Dashboard {
             None
         };
         if let Some(detail) = detail {
-            print_text_with_coordinates(detail, 1, rows.saturating_sub(2), Some(cols.saturating_sub(2)), None);
+            print_text_with_coordinates(
+                detail,
+                1,
+                rows.saturating_sub(2),
+                Some(cols.saturating_sub(2)),
+                None,
+            );
         }
         let more = match at {
             Some(i) if lines.len() > fit => format!("{}/{} · ", i + 1, listing.items.len()),
@@ -489,7 +549,8 @@ impl Dashboard {
         if json == self.saved {
             return;
         }
-        match std::fs::write(STATE_TMP, &json).and_then(|()| std::fs::rename(STATE_TMP, STATE_FILE)) {
+        match std::fs::write(STATE_TMP, &json).and_then(|()| std::fs::rename(STATE_TMP, STATE_FILE))
+        {
             Ok(()) => {
                 self.saved = json;
                 self.save_failing = false;
@@ -510,7 +571,11 @@ impl Dashboard {
         let text = match parse_query(&self.query, &self.catalog) {
             Query::Command { name, rest } => return self.command_list(name, rest),
             Query::Search(Scope::All, text) if text.trim().is_empty() => {
-                let mut items: Vec<Item> = self.sessions("").into_iter().map(|(_, item)| item).collect();
+                let mut items: Vec<Item> = self
+                    .sessions("")
+                    .into_iter()
+                    .map(|(_, item)| item)
+                    .collect();
                 let from = items.len();
                 let recent = self
                     .palette
@@ -521,7 +586,11 @@ impl Dashboard {
                     .map(|i| self.action_item(i, Vec::new()));
                 items.extend(recent);
                 let recent_from = (items.len() > from).then_some(from);
-                return Listing { items, recent_from, default: 0 };
+                return Listing {
+                    items,
+                    recent_from,
+                    default: 0,
+                };
             }
             Query::Search(scope, text) => (scope, text),
         };
@@ -529,23 +598,50 @@ impl Dashboard {
         // Ties go to sessions, then tabs, then the most recent and shortest actions
         let mut scored: Vec<(i32, usize, (usize, usize), Item)> = Vec::new();
         if matches!(scope, Scope::All | Scope::Sessions) {
-            scored.extend(self.sessions(text).into_iter().map(|(score, item)| (score, 0, (0, 0), item)));
+            scored.extend(
+                self.sessions(text)
+                    .into_iter()
+                    .map(|(score, item)| (score, 0, (0, 0), item)),
+            );
         }
         if matches!(scope, Scope::All | Scope::Tabs) {
             let mut tabs: Vec<&TabInfo> = self.tabs.iter().collect();
             tabs.sort_by_key(|t| t.position);
             for t in tabs {
-                let label = format!("{} {}", t.position + 1, self.tab_names.base(t.tab_id, &t.name));
+                let label = format!(
+                    "{} {}",
+                    t.position + 1,
+                    self.tab_names.base(t.tab_id, &t.name)
+                );
                 if let Some((score, hits)) = fuzzy_match(text, &[&label]) {
-                    scored.push((score, 1, (0, 0), Item { pick: Pick::Tab(t.tab_id), kind: Kind::Tab(label), hits }));
+                    scored.push((
+                        score,
+                        1,
+                        (0, 0),
+                        Item {
+                            pick: Pick::Tab(t.tab_id),
+                            kind: Kind::Tab(label),
+                            hits,
+                        },
+                    ));
                 }
             }
         }
         if matches!(scope, Scope::All | Scope::Actions) {
             for (i, e) in self.catalog.entries.iter().enumerate() {
                 if let Some((score, mut hits)) = fuzzy_match(text, &[&e.label]) {
-                    let recency = self.palette.recent.iter().position(|c| *c == e.command()).unwrap_or(usize::MAX);
-                    scored.push((score, 2, (recency, e.label.len()), self.action_item(i, hits.swap_remove(0))));
+                    let recency = self
+                        .palette
+                        .recent
+                        .iter()
+                        .position(|c| *c == e.command())
+                        .unwrap_or(usize::MAX);
+                    scored.push((
+                        score,
+                        2,
+                        (recency, e.label.len()),
+                        self.action_item(i, hits.swap_remove(0)),
+                    ));
                 }
             }
         }
@@ -565,9 +661,17 @@ impl Dashboard {
             .into_iter()
             .filter_map(|session| {
                 let tab = self.tab_label(session.pane);
-                let (score, hits) = fuzzy_match(query, &[session.project(), &tab, &session.status.label()])?;
+                let (score, hits) =
+                    fuzzy_match(query, &[session.project(), &tab, &session.status.label()])?;
                 let kind = Kind::Session { session, tab };
-                Some((score, Item { pick: Pick::Session(session.pane), kind, hits }))
+                Some((
+                    score,
+                    Item {
+                        pick: Pick::Session(session.pane),
+                        kind,
+                        hits,
+                    },
+                ))
             })
             .collect()
     }
@@ -584,8 +688,18 @@ impl Dashboard {
     /// its arguments, to complete them.
     fn command_list<'a>(&'a self, name: &str, rest: &str) -> Listing<'a> {
         let typed = self.query.trim_start_matches('>').trim_start();
-        let mut items = vec![Item { pick: Pick::Command, kind: Kind::Command(typed), hits: Vec::new() }];
-        for (i, e) in self.catalog.entries.iter().enumerate().filter(|(_, e)| e.name == name) {
+        let mut items = vec![Item {
+            pick: Pick::Command,
+            kind: Kind::Command(typed),
+            hits: Vec::new(),
+        }];
+        for (i, e) in self
+            .catalog
+            .entries
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.name == name)
+        {
             // Match the arguments' part of the label
             let head = e.name.replace('-', " ");
             let tail = e.label.strip_prefix(&head).unwrap_or_default().trim_start();
@@ -595,9 +709,16 @@ impl Dashboard {
             }
         }
         // Start on the command line once it would run
-        let runs = self.catalog.actions(name, rest, self.target, Box::new(|| "/".into())).is_ok();
+        let runs = self
+            .catalog
+            .actions(name, rest, self.target, Box::new(|| "/".into()))
+            .is_ok();
         let default = if runs || items.len() == 1 { 0 } else { 1 };
-        Listing { items, recent_from: None, default }
+        Listing {
+            items,
+            recent_from: None,
+            default,
+        }
     }
 
     /// The selected row, falling back to the default once it's filtered out.
@@ -626,7 +747,10 @@ impl Dashboard {
         let mut line = Line::default();
         line.push(" ", 1);
         let glyph = match &item.kind {
-            Kind::Session { session, .. } => (self.icons.icon(session.badge(), self.lit), Some(session.badge())),
+            Kind::Session { session, .. } => (
+                self.icons.icon(session.badge(), self.lit),
+                Some(session.badge()),
+            ),
             Kind::Tab(_) => (self.icons.tab(), None),
             Kind::Action(_) | Kind::Command(_) => (self.icons.action(), None),
         };
@@ -699,11 +823,16 @@ impl Dashboard {
     }
 
     fn floating_visible(&self, tab: usize) -> bool {
-        self.tabs.iter().any(|t| t.position == tab && t.are_floating_panes_visible)
+        self.tabs
+            .iter()
+            .any(|t| t.position == tab && t.are_floating_panes_visible)
     }
 
     fn own_visible(&self) -> bool {
-        self.own_shown && self.own_tab.is_some_and(|t| !self.own_floating || self.floating_visible(t))
+        self.own_shown
+            && self
+                .own_tab
+                .is_some_and(|t| !self.own_floating || self.floating_visible(t))
     }
 
     /// The terminal pane the user is looking at in a tab. A floating pane only
@@ -722,7 +851,9 @@ impl Dashboard {
         if !self.panes_current {
             return;
         }
-        let Some(pane) = self.active_tab.and_then(|tab| self.focused_terminal(tab)) else { return };
+        let Some(pane) = self.active_tab.and_then(|tab| self.focused_terminal(tab)) else {
+            return;
+        };
         if self.tracker.mark_seen(pane) {
             self.dirty = true;
         }
@@ -757,7 +888,11 @@ impl Dashboard {
                 frames.push(unlit);
             }
             changed |= self.tab_names.wrote(tab.tab_id, &base, &frames);
-            let want = if self.lit { &frames[0] } else { frames.last().unwrap() };
+            let want = if self.lit {
+                &frames[0]
+            } else {
+                frames.last().unwrap()
+            };
             if self.tab_names.request(tab.tab_id, &tab.name, want) {
                 rename_tab_with_id(tab.tab_id as u64, want.clone());
                 renamed = true;
@@ -802,12 +937,16 @@ impl Dashboard {
         match key.bare_key {
             BareKey::Down if key.has_no_modifiers() => self.step(&list, idx, 1),
             BareKey::Char('n' | 'j') if ctrl => self.step(&list, idx, 1),
-            BareKey::Up if key.has_no_modifiers() => self.step(&list, idx, list.len().saturating_sub(1)),
+            BareKey::Up if key.has_no_modifiers() => {
+                self.step(&list, idx, list.len().saturating_sub(1))
+            }
             BareKey::Char('p' | 'k') if ctrl => self.step(&list, idx, list.len().saturating_sub(1)),
             BareKey::Enter => current.is_some_and(|pick| self.choose(pick)),
             // Edit an action's command line, to add arguments
             BareKey::Tab if key.has_no_modifiers() => match current {
-                Some(Pick::Action(i)) => self.set_query(format!(">{} ", self.catalog.entries[i].command())),
+                Some(Pick::Action(i)) => {
+                    self.set_query(format!(">{} ", self.catalog.entries[i].command()))
+                }
                 _ => false,
             },
             BareKey::Esc if !self.query.is_empty() => self.set_query(String::new()),
@@ -940,27 +1079,33 @@ impl Dashboard {
         }
         self.target = Target {
             pane: self.focused_terminal(active),
-            tab: self.tabs.iter().find(|t| t.position == active).map(|t| t.tab_id),
+            tab: self
+                .tabs
+                .iter()
+                .find(|t| t.position == active)
+                .map(|t| t.tab_id),
         };
         match self.own_tab {
             // show_self would jump to the pane's old tab, so bring it here
             // instead. break_panes_to_tab_with_index can't: Zellij mixes up tab
             // positions and ids there, and drops the pane once a tab has closed.
-            Some(tab) if tab != active => match RunPluginOrAlias::from_url(ALIAS, &None, None, None) {
-                Ok(plugin) => run_action(
-                    Action::LaunchOrFocusPlugin {
-                        plugin,
-                        should_float: true,
-                        move_to_focused_tab: true,
-                        should_open_in_place: false,
-                        close_replaced_pane: false,
-                        skip_cache: false,
-                        tab_id: None,
-                    },
-                    BTreeMap::new(),
-                ),
-                Err(e) => eprintln!("mission-control: bad alias {ALIAS}: {e}"),
-            },
+            Some(tab) if tab != active => {
+                match RunPluginOrAlias::from_url(ALIAS, &None, None, None) {
+                    Ok(plugin) => run_action(
+                        Action::LaunchOrFocusPlugin {
+                            plugin,
+                            should_float: true,
+                            move_to_focused_tab: true,
+                            should_open_in_place: false,
+                            close_replaced_pane: false,
+                            skip_cache: false,
+                            tab_id: None,
+                        },
+                        BTreeMap::new(),
+                    ),
+                    Err(e) => eprintln!("mission-control: bad alias {ALIAS}: {e}"),
+                }
+            }
             _ => show_self(true),
         }
     }
@@ -971,12 +1116,14 @@ impl Dashboard {
         match dispatch(&action) {
             Dispatch::RunAction => run_action(action, BTreeMap::new()),
             Dispatch::Command => match action {
-                Action::Paste { chars, pane_id: Some(pane_id) } => {
-                    write_to_pane_id(format!("\x1b[200~{chars}\x1b[201~").into_bytes(), pane_id)
-                }
-                Action::RenamePaneByPaneId { pane_id: Some(pane_id), name } => {
-                    rename_pane_with_id(pane_id, String::from_utf8_lossy(&name))
-                }
+                Action::Paste {
+                    chars,
+                    pane_id: Some(pane_id),
+                } => write_to_pane_id(format!("\x1b[200~{chars}\x1b[201~").into_bytes(), pane_id),
+                Action::RenamePaneByPaneId {
+                    pane_id: Some(pane_id),
+                    name,
+                } => rename_pane_with_id(pane_id, String::from_utf8_lossy(&name)),
                 Action::FocusPaneByPaneId { pane_id } => focus_pane_with_id(pane_id, false, false),
                 Action::GoToTabById { id } => {
                     if let Some(t) = self.tabs.iter().find(|t| t.tab_id as u64 == id) {
@@ -991,14 +1138,21 @@ impl Dashboard {
                     }
                 }
                 Action::StackPanes { pane_ids } => stack_panes(pane_ids),
-                Action::ChangeFloatingPaneCoordinates { pane_id, coordinates } => {
-                    change_floating_panes_coordinates(vec![(pane_id, coordinates)])
-                }
+                Action::ChangeFloatingPaneCoordinates {
+                    pane_id,
+                    coordinates,
+                } => change_floating_panes_coordinates(vec![(pane_id, coordinates)]),
                 Action::TogglePaneBorderless { pane_id } => toggle_pane_borderless(pane_id),
-                Action::SetPaneBorderless { pane_id, borderless } => set_pane_borderless(pane_id, borderless),
-                Action::SwitchSession { name, tab_position, pane_id, .. } => {
-                    switch_session_with_focus(&name, tab_position, pane_id)
-                }
+                Action::SetPaneBorderless {
+                    pane_id,
+                    borderless,
+                } => set_pane_borderless(pane_id, borderless),
+                Action::SwitchSession {
+                    name,
+                    tab_position,
+                    pane_id,
+                    ..
+                } => switch_session_with_focus(&name, tab_position, pane_id),
                 Action::SetPaneColor { pane_id, fg, bg } => set_pane_color(pane_id, fg, bg),
                 _ => {}
             },

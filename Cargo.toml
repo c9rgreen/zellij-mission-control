@@ -2,7 +2,13 @@
 name = "zellij-mission-control"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.89"
+description = "A Zellij plugin that tracks your Claude Code sessions and notifies you when one needs you"
 license = "MIT"
+repository = "https://github.com/c9rgreen/zellij-mission-control"
+readme = "README.md"
+keywords = ["zellij", "zellij-plugin", "claude-code", "terminal"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 clap = { version = "4.6", default-features = false, features = ["std"] }
