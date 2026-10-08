@@ -1145,7 +1145,8 @@ mod tests {
         t.apply(ev("Stop"), 0);
         // Earlier versions kept each session's tty from its events
         let saved = save(&t, &TabNames::default(), &Palette::default())
-            .replace("\"seen\"", "\"tty\":\"/dev/pts/7\",\"seen\"");
+            .replace("\"tty\":\"\"", "\"tty\":\"/dev/pts/7\"");
+        assert_eq!(saved.matches("\"tty\"").count(), 1, "{saved}");
         assert!(saved.contains("/dev/pts/7"));
         let restored = restore(&saved).0;
         assert_eq!(restored.get(3).unwrap().status, Status::Ready);
