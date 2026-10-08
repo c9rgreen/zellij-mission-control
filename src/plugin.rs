@@ -1,3 +1,4 @@
+use crate::notify::NOTIFY_SH;
 use crate::palette::{dispatch, parse_query, Catalog, Dispatch, Entry, Query, Scope, Target};
 use crate::state::{self, format_age, fuzzy_match, Alert, Badge, HookEvent, Session, Tracker};
 use crate::tabs::{tab_name, IconSet, TabNames};
@@ -27,22 +28,6 @@ const STATE_TMP: &str = "/data/sessions.json.tmp";
 const RECENT_SHOWN: usize = 5;
 /// Recent actions remembered, which also break ties in the search.
 const RECENT_KEPT: usize = 20;
-
-/// Posts a notification as an OSC escape code written to the Claude pane's pty.
-/// Zellij forwards OSC 777 from a pane to the outer terminal (as OSC 9), so it
-/// reaches the local terminal even over SSH; the terminal decides whether to
-/// show it. Args: pane tty, title, message.
-///
-/// Claude draws to the same pty, and a write landing inside one of its escape
-/// sequences garbles the screen. There's no way to write between its frames,
-/// so wait out the redraw that comes with the status change; it goes quiet
-/// once Claude stops or prompts.
-const NOTIFY_SH: &str = r#"
-tty=$1 title=$2 message=$3
-[ -w "$tty" ] || { echo "pane tty '$tty' isn't writable" >&2; exit 2; }
-sleep 0.3
-printf '\033]777;notify;%s;%s\007' "$(printf %s "$title" | tr ';' ,)" "$(printf %s "$message" | tr ';' ,)" >"$tty"
-"#;
 
 #[derive(Default)]
 pub struct Dashboard {
@@ -1164,8 +1149,13 @@ impl Dashboard {
         if !self.notify {
             return;
         }
-        let Some(session) = self.tracker.get(alert.pane) else {
-            return;
+        // Ask Zellij rather than the event, which anything local can send
+        let pid = match get_pane_pid(PaneId::Terminal(alert.pane)) {
+            Ok(pid) => pid.to_string(),
+            Err(e) => {
+                eprintln!("mission-control: no process for pane {}: {e}", alert.pane);
+                return;
+            }
         };
         run_command(
             &[
@@ -1173,7 +1163,7 @@ impl Dashboard {
                 "-c",
                 NOTIFY_SH,
                 "mission-control-notify",
-                &session.tty,
+                &pid,
                 &strip_controls(&alert.title),
                 &strip_controls(&alert.message),
             ],

@@ -22,8 +22,6 @@ pub struct HookEvent {
     /// Unix time, fractional, when the hook ran. Each event is piped by its own
     /// process, so they can arrive out of order; 0 means unknown.
     pub at: f64,
-    /// The pane's pty, for OSC notifications.
-    pub tty: String,
     /// The subagent the event came from; None for the main thread.
     pub agent_id: Option<String>,
 }
@@ -67,7 +65,6 @@ pub struct Session {
     pub status: Status,
     /// Unix time of the last status change.
     pub since: u64,
-    pub tty: String,
     /// The user has focused the pane since its status last changed.
     pub seen: bool,
     /// While NeedsInput: the prompt it's blocked on.
@@ -209,7 +206,6 @@ impl Tracker {
             cwd: String::new(),
             status: next.clone(),
             since: now,
-            tty: String::new(),
             seen: false,
             prompt: None,
             calls: Vec::new(),
@@ -218,9 +214,6 @@ impl Tracker {
         });
         if !ev.cwd.is_empty() {
             session.cwd = ev.cwd.clone();
-        }
-        if is_tty_path(&ev.tty) {
-            session.tty = ev.tty.clone();
         }
         let late = ev.at > 0.0 && ev.at < session.latest_at;
         session.latest_at = session.latest_at.max(ev.at);
@@ -421,6 +414,7 @@ impl Tracker {
         self.sessions.is_empty()
     }
 
+    #[cfg(test)]
     pub fn get(&self, pane: u32) -> Option<&Session> {
         self.sessions.get(&pane)
     }
@@ -431,14 +425,6 @@ impl Tracker {
         list.sort_by_key(|s| (s.badge(), tab_of(s.pane).unwrap_or(usize::MAX), s.pane));
         list
     }
-}
-
-/// The plugin writes notifications to the session's tty, so take only the
-/// device paths the hook sends, never a path to an ordinary file.
-fn is_tty_path(path: &str) -> bool {
-    path.strip_prefix("/dev/").is_some_and(|rest| {
-        !rest.is_empty() && rest.chars().all(|c| c.is_ascii_alphanumeric() || c == '/')
-    })
 }
 
 fn is_boundary(event: &str) -> bool {
@@ -1101,7 +1087,6 @@ mod tests {
         let mut t = Tracker::default();
         let mut req = ev("PermissionRequest");
         req.tool = Some("Bash".into());
-        req.tty = "/dev/ttys004".into();
         t.apply(req, 5);
         t.apply(
             HookEvent {
@@ -1120,10 +1105,7 @@ mod tests {
         let (r, tabs, restored) = restore(&save(&t, &tabs, &palette));
         let s = r.get(3).unwrap();
         assert_eq!(s.status, Status::NeedsInput("Wants to use Bash".into()));
-        assert_eq!(
-            (s.since, s.tty.as_str(), s.project()),
-            (5, "/dev/ttys004", "my-app")
-        );
+        assert_eq!((s.since, s.project()), (5, "my-app"));
         assert!(r.get(4).unwrap().seen);
         assert_eq!(tabs.base(2, "! api"), "api");
         assert_eq!(restored, palette);
@@ -1152,32 +1134,14 @@ mod tests {
     }
 
     #[test]
-    fn keeps_only_device_tty_paths() {
+    fn reads_saves_that_kept_a_tty() {
         let mut t = Tracker::default();
-        for tty in [
-            "/dev/ttys004",
-            "/etc/passwd",
-            "/dev/../etc/passwd",
-            "/dev/",
-            "ttys004",
-        ] {
-            t.apply(
-                HookEvent {
-                    tty: tty.into(),
-                    ..ev("SessionStart")
-                },
-                0,
-            );
-        }
-        assert_eq!(t.get(3).unwrap().tty, "/dev/ttys004");
-        t.apply(
-            HookEvent {
-                tty: "/dev/pts/7".into(),
-                ..ev("Stop")
-            },
-            0,
-        );
-        assert_eq!(t.get(3).unwrap().tty, "/dev/pts/7");
+        t.apply(ev("Stop"), 0);
+        // Earlier versions kept each session's tty from its events
+        let saved = save(&t, &TabNames::default(), &Palette::default())
+            .replace("\"seen\"", "\"tty\":\"/dev/pts/7\",\"seen\"");
+        assert!(saved.contains("/dev/pts/7"));
+        assert_eq!(restore(&saved).0.get(3).unwrap().status, Status::Ready);
     }
 
     #[test]

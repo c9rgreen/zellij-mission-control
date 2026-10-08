@@ -1,6 +1,7 @@
-// The state and tabs modules are only partly used by the native test build
+// The state, tabs and notify modules are only partly used by the native test build
 #![cfg_attr(not(target_family = "wasm"), allow(dead_code))]
 
+mod notify;
 mod palette;
 mod state;
 mod tabs;
