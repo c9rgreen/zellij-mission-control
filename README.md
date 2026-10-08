@@ -39,7 +39,8 @@ it works the same locally and over SSH. The terminal decides whether and how to
 show it (Ghostty, iTerm2, WezTerm and kitty all support OSC 9).
 
 To find the pty, the plugin asks Zellij for the pane's process, then reads that
-process's terminal from `/proc` on Linux or asks `ps` elsewhere.
+process's terminal from `/proc` on Linux or asks `ps` on macOS. Other systems
+haven't been tried.
 
 ## Install
 

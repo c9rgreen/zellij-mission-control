@@ -3,18 +3,20 @@
 /// reaches the local terminal even over SSH; the terminal decides whether to
 /// show it. Args: the pid Zellij reports for the pane, title, message.
 ///
-/// Events come from a pipe any local process can write to. A forged event can
-/// still pick which pane is notified, but not where the write goes: it goes to
-/// the pane process's own terminal, so while that process runs it can only
-/// reach a pane's pty (the plugin skips panes whose command has exited, as
-/// their pid may since have been reused). That's still checked for a
-/// character device, and opened for append, so a surprise can never overwrite
-/// a file.
+/// Events come from a pipe anything running as this user can write to, so a
+/// stray or malformed event picks which pane is notified, but never where the
+/// write goes: that's the pane process's own terminal, which can only be a
+/// pane's pty while the process runs (the plugin skips panes whose command
+/// has exited, as their pid may since have been reused). It's still checked
+/// for a character device, and opened for append, so a surprise can never
+/// overwrite a file.
 ///
 /// Linux reads the controlling terminal from `/proc`, which is always there
 /// and doesn't vary like `ps` does: field 7 of `stat`, a device number whose
-/// majors 136-143 are `/dev/pts`. A terminal of any other kind, or a system
-/// without `/proc`, is asked of `ps`.
+/// majors 136-143 are `/dev/pts`. A pane is always on a pts, so anything else
+/// is refused rather than looked up. Other systems ask `ps`, whose output is
+/// expected as macOS prints it: BSD `ps` prints `-` for no terminal, which is
+/// handled, but abbreviates terminal names, which isn't.
 ///
 /// Claude draws to the same pty, and a write landing inside one of its escape
 /// sequences garbles the screen. There's no way to write between its frames,
@@ -27,14 +29,16 @@ if stat=$(cat "/proc/$pid/stat" 2>/dev/null); then
     # The command name in field 2 can hold spaces and parens, so skip past it
     set -- ${stat##*) }
     dev=${5:-0}
-    [ "$dev" -ne 0 ] || { echo "pane process $pid has no terminal" >&2; exit 2; }
-    major=$(( (dev >> 8) & 0xfff )) minor=$(( (dev & 0xff) | ((dev >> 12) & 0xfff00) ))
-    [ "$major" -ge 136 ] && [ "$major" -le 143 ] && name=pts/$(( (major - 136) * 256 + minor ))
+    if [ "$dev" -ne 0 ]; then
+        major=$(( (dev >> 8) & 0xfff )) minor=$(( (dev & 0xff) | ((dev >> 12) & 0xfff00) ))
+        [ "$major" -ge 136 ] && [ "$major" -le 143 ] || { echo "pane process $pid's terminal (device $dev) isn't a pty" >&2; exit 2; }
+        name=pts/$(( (major - 136) * 256 + minor ))
+    fi
+else
+    name=$(ps -o tty= -p "$pid" 2>/dev/null | tr -d ' ')
 fi
-# No /proc, or a terminal that isn't a pts
-[ -n "$name" ] || name=$(ps -o tty= -p "$pid" 2>/dev/null | tr -d ' ')
 case $name in
-'' | '?' | '??') echo "pane process $pid has no terminal" >&2; exit 2 ;;
+'' | '?' | '??' | '-') echo "pane process $pid has no terminal" >&2; exit 2 ;;
 esac
 tty=/dev/$name
 [ -c "$tty" ] && [ -w "$tty" ] || { echo "pane tty '$tty' isn't a writable terminal" >&2; exit 2; }
@@ -238,7 +242,7 @@ mod tests {
 
     #[test]
     fn skips_processes_without_a_terminal() {
-        for name in ["", "?", "??", "nosuchtty"] {
+        for name in ["", "?", "??", "-", "nosuchtty"] {
             let out = notify("1234", "Claude", "Done", &[("ps", &ps_says(name)), NO_PROC]);
             assert!(!out.status.success(), "{name:?}");
         }
@@ -254,7 +258,12 @@ mod tests {
         let file = dir.0.join("not-a-tty");
         std::fs::write(&file, "").unwrap();
         let name = format!("..{}", file.display());
-        let out = notify("1234", "Claude", "Done", &[("ps", &ps_says(&name)), NO_PROC]);
+        let out = notify(
+            "1234",
+            "Claude",
+            "Done",
+            &[("ps", &ps_says(&name)), NO_PROC],
+        );
         assert!(!out.status.success());
         let err = String::from_utf8_lossy(&out.stderr);
         assert!(err.contains("isn't a writable terminal"), "{err}");
@@ -280,24 +289,12 @@ mod tests {
         let out = notify("1234", "Claude", "Done", &[ps, ("cat", stat)]);
         let err = String::from_utf8_lossy(&out.stderr);
         assert!(err.contains("has no terminal"), "{err}");
-    }
 
-    #[test]
-    fn asks_ps_about_terminals_that_are_not_a_pts() {
-        // A tty_nr of major 4, minor 1: the console tty1, not a pts
-        let pty = Pty::open();
+        // Major 4, minor 1 is the console tty1: a terminal, but not a pane's
+        // pts, so it's refused without asking ps
         let stat = "echo '1234 (sh) S 1 1234 1234 1025 -1 0'";
-        let out = notify(
-            "1234",
-            "Claude",
-            "Done",
-            &[("ps", &ps_says(&pty.name)), ("cat", stat)],
-        );
-        assert!(
-            out.status.success(),
-            "{}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        assert_eq!(pty.written(), b"\x1b]777;notify;Claude;Done\x07");
+        let out = notify("1234", "Claude", "Done", &[ps, ("cat", stat)]);
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains("(device 1025) isn't a pty"), "{err}");
     }
 }

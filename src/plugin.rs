@@ -29,6 +29,15 @@ const RECENT_SHOWN: usize = 5;
 /// Recent actions remembered, which also break ties in the search.
 const RECENT_KEPT: usize = 20;
 
+/// A terminal pane, as of the last PaneUpdate.
+#[derive(Clone, Copy)]
+struct Pane {
+    /// Position of its tab.
+    tab: usize,
+    /// Its command has exited, but Zellij holds the pane open.
+    exited: bool,
+}
+
 #[derive(Default)]
 pub struct Dashboard {
     tracker: Tracker,
@@ -41,14 +50,12 @@ pub struct Dashboard {
     /// Each tab's own name, and the names we gave it.
     tab_names: TabNames,
     own_id: u32,
-    /// Terminal pane id → tab position.
-    pane_tab: HashMap<u32, usize>,
-    /// Terminal panes whose command has exited but which Zellij holds open.
-    exited: HashSet<u32>,
+    /// Terminal pane id → where it is.
+    panes: HashMap<u32, Pane>,
     /// Tab position → its focused panes.
     tab_focus: HashMap<usize, Focus>,
     tabs: Vec<TabInfo>,
-    /// pane_tab and tab_focus match the tabs' current positions. Zellij reports
+    /// panes and tab_focus match the tabs' current positions. Zellij reports
     /// tabs before panes, so after tabs move, close or open, the pane maps are
     /// stale until the next PaneUpdate; so are they after a reload.
     panes_current: bool,
@@ -644,7 +651,7 @@ impl Dashboard {
     /// Sessions matching the query, most urgent first, with their scores.
     fn sessions(&self, query: &str) -> Vec<(i32, Item<'_>)> {
         self.tracker
-            .sorted(|p| self.pane_tab.get(&p).copied())
+            .sorted(|p| self.panes.get(&p).map(|pane| pane.tab))
             .into_iter()
             .filter_map(|session| {
                 let tab = self.tab_label(session.pane);
@@ -716,9 +723,9 @@ impl Dashboard {
     }
 
     fn tab_label(&self, pane: u32) -> String {
-        self.pane_tab
+        self.panes
             .get(&pane)
-            .map(|pos| {
+            .map(|Pane { tab: pos, .. }| {
                 let name = self
                     .tabs
                     .iter()
@@ -778,8 +785,7 @@ impl Dashboard {
     }
 
     fn on_panes(&mut self, manifest: PaneManifest) {
-        self.pane_tab.clear();
-        self.exited.clear();
+        self.panes.clear();
         self.tab_focus.clear();
         self.own_tab = None;
         self.own_shown = false;
@@ -791,10 +797,13 @@ impl Dashboard {
                     self.own_floating = p.is_floating;
                 }
                 if !p.is_plugin {
-                    self.pane_tab.insert(p.id, *tab);
-                    if p.exited {
-                        self.exited.insert(p.id);
-                    }
+                    self.panes.insert(
+                        p.id,
+                        Pane {
+                            tab: *tab,
+                            exited: p.exited,
+                        },
+                    );
                 }
                 if p.is_focused && !p.is_suppressed {
                     let focus = self.tab_focus.entry(*tab).or_default();
@@ -807,7 +816,7 @@ impl Dashboard {
                 }
             }
         }
-        let live: HashSet<u32> = self.pane_tab.keys().copied().collect();
+        let live: HashSet<u32> = self.panes.keys().copied().collect();
         if self.tracker.retain_panes(&live) {
             self.dirty = true;
         }
@@ -863,13 +872,19 @@ impl Dashboard {
         if !self.panes_current {
             return;
         }
-        let list = self.tracker.sorted(|p| self.pane_tab.get(&p).copied());
+        let list = self
+            .tracker
+            .sorted(|p| self.panes.get(&p).map(|pane| pane.tab));
         let mut changed = false;
         let mut renamed = false;
         for tab in &self.tabs {
             let badges: Vec<Badge> = list
                 .iter()
-                .filter(|s| self.pane_tab.get(&s.pane) == Some(&tab.position))
+                .filter(|s| {
+                    self.panes
+                        .get(&s.pane)
+                        .is_some_and(|p| p.tab == tab.position)
+                })
                 .map(|s| s.badge())
                 .collect();
             let base = self.tab_names.base(tab.tab_id, &tab.name);
@@ -1155,15 +1170,15 @@ impl Dashboard {
         if !self.notify {
             return;
         }
-        // The event, which anything local can send, picks the pane, Claude's
-        // or not. Its session comes from the event too, so there's nothing to
-        // check the pane against. Zellij picks the process, though, so the
-        // write can only reach a pane's pty, where Zellij reads it, not the
-        // program in the pane. That holds while the process is the pane's:
-        // Zellij still names the pid of a command that has exited in a pane
-        // it holds open, and the system may have given that pid to a process
-        // on some other terminal
-        if self.exited.contains(&alert.pane) {
+        // The event, which anything running as this user can send, picks the
+        // pane, Claude's or not. Its session comes from the event too, so
+        // there's nothing to check the pane against. Zellij picks the process,
+        // though, so a stray event can only send a notification to a pane's
+        // pty, where Zellij reads it, not the program in the pane. A pane
+        // whose command has exited is skipped: Zellij still names its pid,
+        // which the system may since have given to a process on some other
+        // terminal, where the notification would land
+        if self.panes.get(&alert.pane).is_some_and(|p| p.exited) {
             eprintln!(
                 "mission-control: pane {} has exited, not notifying",
                 alert.pane
