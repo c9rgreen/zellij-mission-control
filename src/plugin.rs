@@ -331,7 +331,7 @@ impl ZellijPlugin for Dashboard {
                 self.on_panes(manifest);
                 self.panes_current = true;
                 for alert in std::mem::take(&mut self.pending_alerts) {
-                    self.send_alert(&alert);
+                    self.alert(alert);
                 }
                 self.mark_focused_seen();
                 self.sync_tab_names();
@@ -398,12 +398,13 @@ impl ZellijPlugin for Dashboard {
                 else {
                     return false;
                 };
-                if let Some(alert) = self.tracker.apply(ev, now()) {
-                    if self.panes_current {
-                        self.send_alert(&alert);
-                    } else {
-                        self.pending_alerts.push(alert);
-                    }
+                let pane = ev.pane;
+                let alert = self.tracker.apply(ev, now());
+                // Whatever has happened in the pane since supersedes an alert
+                // still waiting to be sent
+                self.pending_alerts.retain(|a| a.pane != pane);
+                if let Some(alert) = alert {
+                    self.alert(alert);
                 }
                 self.dirty = true;
                 self.mark_focused_seen();
@@ -1174,20 +1175,23 @@ impl Dashboard {
         }
     }
 
+    /// Sends an alert, or holds it until the panes are current, since whether
+    /// its pane is open with its command running decides if it's sent at all.
+    fn alert(&mut self, alert: Alert) {
+        if self.panes_current {
+            self.send_alert(&alert);
+        } else {
+            self.pending_alerts.push(alert);
+        }
+    }
+
     fn send_alert(&self, alert: &Alert) {
         if !self.notify {
             return;
         }
-        // The event, which anything running as this user can send, picks the
-        // pane, Claude's or not. Its session comes from the event too, so
-        // there's nothing to check the pane against. Zellij picks the process,
-        // though, so a stray event can only send a notification to a pane's
-        // pty, where Zellij reads it, not the program in the pane. A pane not
-        // open with its command running is skipped: Zellij still names the
-        // pid of a command that has exited in a pane it holds open, which the
-        // system may since have given to a process on some other terminal,
-        // where the notification would land. Alerts wait for the panes to be
-        // current, so an unknown pane here has closed
+        // Only a pane open with its command running is notified, as of the
+        // last PaneUpdate, which alerts wait for; notify.rs says why. An
+        // unknown pane here has closed
         if !self.panes.get(&alert.pane).is_some_and(|p| !p.exited) {
             eprintln!(
                 "mission-control: pane {} isn't open with its command running, not notifying",

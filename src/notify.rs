@@ -13,12 +13,13 @@
 ///
 /// Linux reads the controlling terminal from `/proc`, which doesn't vary like
 /// `ps` does: field 7 of `stat`, a device number whose major 136 is
-/// `/dev/pts`, with the minor as the index. Where there's no `/proc`, on macOS
-/// or in a container without one, `ps` is asked, with its output expected as
-/// macOS prints it; BSD `ps` abbreviates terminal names, which isn't handled,
-/// so only Linux and macOS are supported. Either way only a pty, `pts/N` or
-/// `ttysN`, is written to, as a pane is always on one: a process on any other
-/// terminal has moved there, and the notification mustn't follow it.
+/// `/dev/pts`, with the minor as the index. Where there's no `/proc`, which is
+/// to say on macOS (a Linux `ps` reads `/proc` itself), `ps` is asked, with
+/// its output expected as macOS prints it; BSD `ps` abbreviates terminal
+/// names, which isn't handled, so only Linux and macOS are supported. Either
+/// way only a pty is written to, `pts/N` from `/proc` or `ttysN` from `ps`, as
+/// a pane is always on one: a process on any other terminal has moved there,
+/// and the notification mustn't follow it.
 ///
 /// Claude draws to the same pty, and a write landing inside one of its escape
 /// sequences garbles the screen. There's no way to write between its frames,
@@ -26,6 +27,7 @@
 /// once Claude stops or prompts.
 pub const NOTIFY_SH: &str = r#"
 pid=$1 title=$2 message=$3
+set -f
 if stat=$(cat "/proc/$pid/stat" 2>/dev/null); then
     # The command name in field 2 can hold spaces and parens, so skip past it
     set -- ${stat##*) }
@@ -41,13 +43,12 @@ if stat=$(cat "/proc/$pid/stat" 2>/dev/null); then
 else
     name=$(ps -o tty= -p "$pid" 2>/dev/null | tr -d ' ')
     case $name in
-    '' | '?' | '??' | '-') echo "pane process $pid has no terminal" >&2; exit 2 ;;
-    ttys*) n=${name#ttys} ;;
-    pts/*) n=${name#pts/} ;;
+    '') echo "pane process $pid can't be found" >&2; exit 2 ;;
+    '?' | '??' | '-') echo "pane process $pid has no terminal" >&2; exit 2 ;;
     esac
-    # ttysNNN on macOS, or pts/N on a Linux without /proc, and nothing more
-    case ${n:-x} in
-    *[!0-9]*) echo "pane process $pid's terminal '$name' isn't a pty" >&2; exit 2 ;;
+    # ttysNNN, as macOS names a pty, and nothing more
+    case ${name#ttys} in
+    '' | *[!0-9]*) echo "pane process $pid's terminal '$name' isn't a pty" >&2; exit 2 ;;
     esac
     tty=/dev/$name
 fi
@@ -238,15 +239,28 @@ mod tests {
     /// A stub `cat` for a system without `/proc`, so `ps` is asked.
     const NO_PROC: (&str, &str) = ("cat", "exit 1");
 
+    /// Stub bodies for `cat` and `ps` that name `pty` as process 1234's
+    /// terminal the way this system would: through `/proc` on Linux, where
+    /// `ps` would read `/proc` too, and through `ps` elsewhere.
+    fn terminal_is(pty: &Pty) -> (String, String) {
+        if cfg!(target_os = "linux") {
+            let index: u64 = pty.name.strip_prefix("pts/").unwrap().parse().unwrap();
+            // tty_nr as the kernel prints it, the minor split around the major
+            let dev = (136 << 8) | (index & 0xff) | ((index & !0xff) << 12);
+            (
+                format!("echo '1234 (sh) S 1 1234 1234 {dev} -1 0'"),
+                ps_says("??"),
+            )
+        } else {
+            (NO_PROC.1.to_owned(), ps_says(&pty.name))
+        }
+    }
+
     #[test]
     fn writes_to_the_pane_process_terminal() {
         let pty = Pty::open();
-        let out = notify(
-            "1234",
-            "Claude; api",
-            "Done",
-            &[("ps", &ps_says(&pty.name)), NO_PROC],
-        );
+        let (cat, ps) = terminal_is(&pty);
+        let out = notify("1234", "Claude; api", "Done", &[("cat", &cat), ("ps", &ps)]);
         assert!(
             out.status.success(),
             "{}",
@@ -284,7 +298,7 @@ mod tests {
         assert_eq!(std::fs::read(&file).unwrap(), b"");
 
         // Terminals that aren't a pty, and pty names with something appended
-        for name in ["console", "tty1", "ttys", "pts/", "ttys1/../console"] {
+        for name in ["console", "tty1", "ttys", "pts/3", "ttys1/../console"] {
             let out = notify("1234", "Claude", "Done", &[("ps", &ps_says(name)), NO_PROC]);
             let err = String::from_utf8_lossy(&out.stderr);
             assert!(err.contains("isn't a pty"), "{name}: {err}");
@@ -295,11 +309,11 @@ mod tests {
             "1234",
             "Claude",
             "Done",
-            &[("ps", &ps_says("pts/1050367")), NO_PROC],
+            &[("ps", &ps_says("ttys9999999")), NO_PROC],
         );
         let err = String::from_utf8_lossy(&out.stderr);
         assert!(
-            err.contains("'/dev/pts/1050367' isn't a writable terminal"),
+            err.contains("'/dev/ttys9999999' isn't a writable terminal"),
             "{err}"
         );
     }

@@ -46,7 +46,8 @@ refused rather than sent somewhere wrong.
 
 ## Install
 
-Requires Rust with the `wasm32-wasip1` target and `jq`.
+Requires Zellij 0.44 or newer, which can tell a plugin a pane's process, Rust
+with the `wasm32-wasip1` target, and `jq`.
 
 ```sh
 just install   # builds, copies the .wasm and hook script into place
