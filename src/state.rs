@@ -79,6 +79,11 @@ pub struct Session {
     /// `at` of the newest event of any kind.
     #[serde(default)]
     latest_at: f64,
+    /// Always saved empty and never read back. Earlier builds require a `tty`
+    /// and drop every session from a save without one, so this keeps a
+    /// rollback from losing them. Remove after a release or two.
+    #[serde(rename = "tty", default, skip_deserializing)]
+    legacy_tty: String,
 }
 
 impl Session {
@@ -211,6 +216,7 @@ impl Tracker {
             calls: Vec::new(),
             boundary_at: 0.0,
             latest_at: 0.0,
+            legacy_tty: String::new(),
         });
         if !ev.cwd.is_empty() {
             session.cwd = ev.cwd.clone();
@@ -1141,7 +1147,12 @@ mod tests {
         let saved = save(&t, &TabNames::default(), &Palette::default())
             .replace("\"seen\"", "\"tty\":\"/dev/pts/7\",\"seen\"");
         assert!(saved.contains("/dev/pts/7"));
-        assert_eq!(restore(&saved).0.get(3).unwrap().status, Status::Ready);
+        let restored = restore(&saved).0;
+        assert_eq!(restored.get(3).unwrap().status, Status::Ready);
+        // Saved again without it, but still present for those versions
+        let resaved = save(&restored, &TabNames::default(), &Palette::default());
+        assert!(resaved.contains("\"tty\":\"\""), "{resaved}");
+        assert!(!resaved.contains("/dev/pts/7"));
     }
 
     #[test]

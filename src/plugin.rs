@@ -1149,7 +1149,8 @@ impl Dashboard {
         if !self.notify {
             return;
         }
-        // Ask Zellij rather than the event, which anything local can send
+        // The event, which anything local can send, still picks the pane, but
+        // Zellij picks the process, so the write can only reach a pane's pty
         let pid = match get_pane_pid(PaneId::Terminal(alert.pane)) {
             Ok(pid) => pid.to_string(),
             Err(e) => {

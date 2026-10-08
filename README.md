@@ -38,6 +38,10 @@ the Claude pane's pty; Zellij forwards it to the outer terminal as `OSC 9`, so
 it works the same locally and over SSH. The terminal decides whether and how to
 show it (Ghostty, iTerm2, WezTerm and kitty all support OSC 9).
 
+To find the pty, the plugin asks Zellij for the pane's process and `ps` for
+that process's terminal. When `ps` can't say, as busybox `ps` can't, it reads
+the terminal from `/proc` on Linux instead.
+
 ## Install
 
 Requires Rust with the `wasm32-wasip1` target and `jq`.
