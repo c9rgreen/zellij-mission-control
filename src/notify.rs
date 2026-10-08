@@ -11,12 +11,14 @@
 /// for a character device, and opened for append, so a surprise can never
 /// overwrite a file.
 ///
-/// Linux reads the controlling terminal from `/proc`, which is always there
-/// and doesn't vary like `ps` does: field 7 of `stat`, a device number whose
-/// majors 136-143 are `/dev/pts`. A pane is always on a pts, so anything else
-/// is refused rather than looked up. Other systems ask `ps`, whose output is
-/// expected as macOS prints it: BSD `ps` prints `-` for no terminal, which is
-/// handled, but abbreviates terminal names, which isn't.
+/// Linux reads the controlling terminal from `/proc`, which doesn't vary like
+/// `ps` does: field 7 of `stat`, a device number whose majors 136-143 are
+/// `/dev/pts`. Where there's no `/proc`, on macOS or in a container without
+/// one, `ps` is asked, with its output expected as macOS prints it: BSD `ps`
+/// prints `-` for no terminal, which is handled, but abbreviates terminal
+/// names, which isn't. Either way only a pty, `pts/N` or `ttysN`, is written
+/// to, as a pane is always on one: a process on any other terminal has moved
+/// there, and the notification mustn't follow it.
 ///
 /// Claude draws to the same pty, and a write landing inside one of its escape
 /// sequences garbles the screen. There's no way to write between its frames,
@@ -28,7 +30,10 @@ name=
 if stat=$(cat "/proc/$pid/stat" 2>/dev/null); then
     # The command name in field 2 can hold spaces and parens, so skip past it
     set -- ${stat##*) }
-    dev=${5:-0}
+    dev=$5
+    case ${dev#-} in
+    '' | *[!0-9]*) echo "pane process $pid has an unreadable stat: $stat" >&2; exit 2 ;;
+    esac
     if [ "$dev" -ne 0 ]; then
         major=$(( (dev >> 8) & 0xfff )) minor=$(( (dev & 0xff) | ((dev >> 12) & 0xfff00) ))
         [ "$major" -ge 136 ] && [ "$major" -le 143 ] || { echo "pane process $pid's terminal (device $dev) isn't a pty" >&2; exit 2; }
@@ -39,6 +44,12 @@ else
 fi
 case $name in
 '' | '?' | '??' | '-') echo "pane process $pid has no terminal" >&2; exit 2 ;;
+pts/[0-9]*) rest=${name#pts/} ;;
+ttys[0-9]*) rest=${name#ttys} ;;
+*) rest=x ;;
+esac
+case $rest in
+*[!0-9]*) echo "pane process $pid's terminal '$name' isn't a pty" >&2; exit 2 ;;
 esac
 tty=/dev/$name
 [ -c "$tty" ] && [ -w "$tty" ] || { echo "pane tty '$tty' isn't a writable terminal" >&2; exit 2; }
@@ -144,6 +155,11 @@ mod tests {
                 };
                 // SAFETY: one valid pollfd, and the master outlives the call
                 let ready = unsafe { poll(&mut fd, 1, left.as_millis() as c_int) };
+                if ready < 0
+                    && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted
+                {
+                    continue;
+                }
                 if ready != 1 {
                     break;
                 }
@@ -252,7 +268,7 @@ mod tests {
     }
 
     #[test]
-    fn writes_only_to_a_character_device() {
+    fn writes_only_to_a_pty() {
         // A writable regular file, named relative to /dev as ps would
         let dir = TempDir::new();
         let file = dir.0.join("not-a-tty");
@@ -264,10 +280,29 @@ mod tests {
             "Done",
             &[("ps", &ps_says(&name)), NO_PROC],
         );
-        assert!(!out.status.success());
         let err = String::from_utf8_lossy(&out.stderr);
-        assert!(err.contains("isn't a writable terminal"), "{err}");
+        assert!(err.contains("isn't a pty"), "{err}");
         assert_eq!(std::fs::read(&file).unwrap(), b"");
+
+        // Terminals that aren't a pty, and pty names with something appended
+        for name in ["console", "tty1", "ttys", "pts/", "ttys1/../console"] {
+            let out = notify("1234", "Claude", "Done", &[("ps", &ps_says(name)), NO_PROC]);
+            let err = String::from_utf8_lossy(&out.stderr);
+            assert!(err.contains("isn't a pty"), "{name}: {err}");
+        }
+
+        // A pty name that no device answers to
+        let out = notify(
+            "1234",
+            "Claude",
+            "Done",
+            &[("ps", &ps_says("pts/1050367")), NO_PROC],
+        );
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            err.contains("'/dev/pts/1050367' isn't a writable terminal"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -296,5 +331,14 @@ mod tests {
         let out = notify("1234", "Claude", "Done", &[ps, ("cat", stat)]);
         let err = String::from_utf8_lossy(&out.stderr);
         assert!(err.contains("(device 1025) isn't a pty"), "{err}");
+
+        // A stat that isn't laid out as expected is reported as such, rather
+        // than as the shell's complaint about a non-number
+        for stat in ["echo garbage", "echo '1234 (sh) S 1 1234 1234 x7 -1 0'"] {
+            let out = notify("1234", "Claude", "Done", &[ps, ("cat", stat)]);
+            let err = String::from_utf8_lossy(&out.stderr);
+            assert!(err.contains("has an unreadable stat"), "{stat}: {err}");
+            assert!(!err.contains("expected"), "{stat}: {err}");
+        }
     }
 }

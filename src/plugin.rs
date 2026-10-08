@@ -1174,13 +1174,15 @@ impl Dashboard {
         // pane, Claude's or not. Its session comes from the event too, so
         // there's nothing to check the pane against. Zellij picks the process,
         // though, so a stray event can only send a notification to a pane's
-        // pty, where Zellij reads it, not the program in the pane. A pane
-        // whose command has exited is skipped: Zellij still names its pid,
+        // pty, where Zellij reads it, not the program in the pane. A pane not
+        // known to be open with its command running is skipped: Zellij still
+        // names the pid of a command that has exited in a pane it holds open,
         // which the system may since have given to a process on some other
-        // terminal, where the notification would land
-        if self.panes.get(&alert.pane).is_some_and(|p| p.exited) {
+        // terminal, where the notification would land. Until the first
+        // PaneUpdate after a load, no pane is known
+        if !self.panes.get(&alert.pane).is_some_and(|p| !p.exited) {
             eprintln!(
-                "mission-control: pane {} has exited, not notifying",
+                "mission-control: pane {} isn't known to be running, not notifying",
                 alert.pane
             );
             return;
