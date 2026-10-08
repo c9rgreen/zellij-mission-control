@@ -45,7 +45,7 @@ mod tests {
     use std::fs::{File, OpenOptions};
     use std::io::Read;
     use std::os::fd::AsRawFd;
-    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     use std::path::PathBuf;
     use std::process::{Command, Output};
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -74,6 +74,14 @@ mod tests {
 
     const POLLIN: c_short = 1;
 
+    /// Opening the slave must not make it the controlling terminal, or a
+    /// test run that is a session leader without one (under setsid, say)
+    /// adopts it and is hung up when the Pty is dropped.
+    #[cfg(target_os = "linux")]
+    const O_NOCTTY: c_int = 0o400;
+    #[cfg(not(target_os = "linux"))]
+    const O_NOCTTY: c_int = 0x20000;
+
     /// A pseudo-terminal, so a test can read back what the script wrote. The
     /// slave stays open so the pty isn't hung up when the script closes it.
     struct Pty {
@@ -89,6 +97,7 @@ mod tests {
                 OpenOptions::new()
                     .read(true)
                     .write(true)
+                    .custom_flags(O_NOCTTY)
                     .open(path)
                     .unwrap()
             };
