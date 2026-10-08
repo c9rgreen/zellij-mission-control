@@ -43,6 +43,8 @@ pub struct Dashboard {
     own_id: u32,
     /// Terminal pane id → tab position.
     pane_tab: HashMap<u32, usize>,
+    /// Terminal panes whose command has exited but which Zellij holds open.
+    exited: HashSet<u32>,
     /// Tab position → its focused panes.
     tab_focus: HashMap<usize, Focus>,
     tabs: Vec<TabInfo>,
@@ -777,6 +779,7 @@ impl Dashboard {
 
     fn on_panes(&mut self, manifest: PaneManifest) {
         self.pane_tab.clear();
+        self.exited.clear();
         self.tab_focus.clear();
         self.own_tab = None;
         self.own_shown = false;
@@ -789,6 +792,9 @@ impl Dashboard {
                 }
                 if !p.is_plugin {
                     self.pane_tab.insert(p.id, *tab);
+                    if p.exited {
+                        self.exited.insert(p.id);
+                    }
                 }
                 if p.is_focused && !p.is_suppressed {
                     let focus = self.tab_focus.entry(*tab).or_default();
@@ -1153,7 +1159,17 @@ impl Dashboard {
         // or not. Its session comes from the event too, so there's nothing to
         // check the pane against. Zellij picks the process, though, so the
         // write can only reach a pane's pty, where Zellij reads it, not the
-        // program in the pane
+        // program in the pane. That holds while the process is the pane's:
+        // Zellij still names the pid of a command that has exited in a pane
+        // it holds open, and the system may have given that pid to a process
+        // on some other terminal
+        if self.exited.contains(&alert.pane) {
+            eprintln!(
+                "mission-control: pane {} has exited, not notifying",
+                alert.pane
+            );
+            return;
+        }
         let pid = match get_pane_pid(PaneId::Terminal(alert.pane)) {
             Ok(pid) => pid.to_string(),
             Err(e) => {

@@ -5,13 +5,16 @@
 ///
 /// Events come from a pipe any local process can write to. A forged event can
 /// still pick which pane is notified, but not where the write goes: it goes to
-/// the pane process's own terminal, so it can only reach a pane's pty. That's
-/// still checked for a character device, and opened for append, so a surprise
-/// can never overwrite a file.
+/// the pane process's own terminal, so while that process runs it can only
+/// reach a pane's pty (the plugin skips panes whose command has exited, as
+/// their pid may since have been reused). That's still checked for a
+/// character device, and opened for append, so a surprise can never overwrite
+/// a file.
 ///
 /// Linux reads the controlling terminal from `/proc`, which is always there
 /// and doesn't vary like `ps` does: field 7 of `stat`, a device number whose
-/// majors 136-143 are `/dev/pts`. Other systems ask `ps`.
+/// majors 136-143 are `/dev/pts`. A terminal of any other kind, or a system
+/// without `/proc`, is asked of `ps`.
 ///
 /// Claude draws to the same pty, and a write landing inside one of its escape
 /// sequences garbles the screen. There's no way to write between its frames,
@@ -24,11 +27,12 @@ if stat=$(cat "/proc/$pid/stat" 2>/dev/null); then
     # The command name in field 2 can hold spaces and parens, so skip past it
     set -- ${stat##*) }
     dev=${5:-0}
+    [ "$dev" -ne 0 ] || { echo "pane process $pid has no terminal" >&2; exit 2; }
     major=$(( (dev >> 8) & 0xfff )) minor=$(( (dev & 0xff) | ((dev >> 12) & 0xfff00) ))
     [ "$major" -ge 136 ] && [ "$major" -le 143 ] && name=pts/$(( (major - 136) * 256 + minor ))
-else
-    name=$(ps -o tty= -p "$pid" 2>/dev/null | tr -d ' ')
 fi
+# No /proc, or a terminal that isn't a pts
+[ -n "$name" ] || name=$(ps -o tty= -p "$pid" 2>/dev/null | tr -d ' ')
 case $name in
 '' | '?' | '??') echo "pane process $pid has no terminal" >&2; exit 2 ;;
 esac
@@ -141,6 +145,10 @@ mod tests {
                 }
                 let mut buf = [0; 256];
                 let n = (&self.master).read(&mut buf).unwrap();
+                if n == 0 {
+                    // Hung up, so nothing more is coming
+                    break;
+                }
                 out.extend_from_slice(&buf[..n]);
             }
             assert!(!out.is_empty(), "nothing was written to the pty");
@@ -240,6 +248,20 @@ mod tests {
     }
 
     #[test]
+    fn writes_only_to_a_character_device() {
+        // A writable regular file, named relative to /dev as ps would
+        let dir = TempDir::new();
+        let file = dir.0.join("not-a-tty");
+        std::fs::write(&file, "").unwrap();
+        let name = format!("..{}", file.display());
+        let out = notify("1234", "Claude", "Done", &[("ps", &ps_says(&name)), NO_PROC]);
+        assert!(!out.status.success());
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains("isn't a writable terminal"), "{err}");
+        assert_eq!(std::fs::read(&file).unwrap(), b"");
+    }
+
+    #[test]
     fn reads_the_terminal_from_proc_before_ps() {
         // A ps that names a terminal, which /proc overrules
         let ps_body = ps_says("ttys001");
@@ -253,10 +275,29 @@ mod tests {
         let err = String::from_utf8_lossy(&out.stderr);
         assert!(err.contains("'/dev/pts/1050367'"), "{err}");
 
-        // A tty_nr of 0 means no controlling terminal
+        // A tty_nr of 0 means no controlling terminal, whatever ps says
         let stat = "echo '1234 (sh) S 1 1234 1234 0 -1 0'";
         let out = notify("1234", "Claude", "Done", &[ps, ("cat", stat)]);
         let err = String::from_utf8_lossy(&out.stderr);
         assert!(err.contains("has no terminal"), "{err}");
+    }
+
+    #[test]
+    fn asks_ps_about_terminals_that_are_not_a_pts() {
+        // A tty_nr of major 4, minor 1: the console tty1, not a pts
+        let pty = Pty::open();
+        let stat = "echo '1234 (sh) S 1 1234 1234 1025 -1 0'";
+        let out = notify(
+            "1234",
+            "Claude",
+            "Done",
+            &[("ps", &ps_says(&pty.name)), ("cat", stat)],
+        );
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(pty.written(), b"\x1b]777;notify;Claude;Done\x07");
     }
 }
