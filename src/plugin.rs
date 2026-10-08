@@ -30,7 +30,6 @@ const RECENT_SHOWN: usize = 5;
 const RECENT_KEPT: usize = 20;
 
 /// A terminal pane, as of the last PaneUpdate.
-#[derive(Clone, Copy)]
 struct Pane {
     /// Position of its tab.
     tab: usize,
@@ -52,6 +51,10 @@ pub struct Dashboard {
     own_id: u32,
     /// Terminal pane id → where it is.
     panes: HashMap<u32, Pane>,
+    /// Alerts held back while the panes aren't current, sent on the next
+    /// PaneUpdate: whether a pane's command still runs decides where its
+    /// notification may go.
+    pending_alerts: Vec<Alert>,
     /// Tab position → its focused panes.
     tab_focus: HashMap<usize, Focus>,
     tabs: Vec<TabInfo>,
@@ -327,6 +330,9 @@ impl ZellijPlugin for Dashboard {
             Event::PaneUpdate(manifest) => {
                 self.on_panes(manifest);
                 self.panes_current = true;
+                for alert in std::mem::take(&mut self.pending_alerts) {
+                    self.send_alert(&alert);
+                }
                 self.mark_focused_seen();
                 self.sync_tab_names();
                 true
@@ -393,7 +399,11 @@ impl ZellijPlugin for Dashboard {
                     return false;
                 };
                 if let Some(alert) = self.tracker.apply(ev, now()) {
-                    self.send_alert(&alert);
+                    if self.panes_current {
+                        self.send_alert(&alert);
+                    } else {
+                        self.pending_alerts.push(alert);
+                    }
                 }
                 self.dirty = true;
                 self.mark_focused_seen();
@@ -651,7 +661,7 @@ impl Dashboard {
     /// Sessions matching the query, most urgent first, with their scores.
     fn sessions(&self, query: &str) -> Vec<(i32, Item<'_>)> {
         self.tracker
-            .sorted(|p| self.panes.get(&p).map(|pane| pane.tab))
+            .sorted(|p| self.pane_tab(p))
             .into_iter()
             .filter_map(|session| {
                 let tab = self.tab_label(session.pane);
@@ -722,14 +732,18 @@ impl Dashboard {
             .or_else(|| listing.items.get(listing.default).map(|i| i.pick))
     }
 
+    /// Position of the tab a terminal pane is on, as of the last PaneUpdate.
+    fn pane_tab(&self, pane: u32) -> Option<usize> {
+        self.panes.get(&pane).map(|p| p.tab)
+    }
+
     fn tab_label(&self, pane: u32) -> String {
-        self.panes
-            .get(&pane)
-            .map(|Pane { tab: pos, .. }| {
+        self.pane_tab(pane)
+            .map(|pos| {
                 let name = self
                     .tabs
                     .iter()
-                    .find(|t| t.position == *pos)
+                    .find(|t| t.position == pos)
                     .map(|t| self.tab_names.base(t.tab_id, &t.name))
                     .unwrap_or_default();
                 format!("{} {name}", pos + 1)
@@ -872,19 +886,13 @@ impl Dashboard {
         if !self.panes_current {
             return;
         }
-        let list = self
-            .tracker
-            .sorted(|p| self.panes.get(&p).map(|pane| pane.tab));
+        let list = self.tracker.sorted(|p| self.pane_tab(p));
         let mut changed = false;
         let mut renamed = false;
         for tab in &self.tabs {
             let badges: Vec<Badge> = list
                 .iter()
-                .filter(|s| {
-                    self.panes
-                        .get(&s.pane)
-                        .is_some_and(|p| p.tab == tab.position)
-                })
+                .filter(|s| self.pane_tab(s.pane) == Some(tab.position))
                 .map(|s| s.badge())
                 .collect();
             let base = self.tab_names.base(tab.tab_id, &tab.name);
@@ -1175,14 +1183,14 @@ impl Dashboard {
         // there's nothing to check the pane against. Zellij picks the process,
         // though, so a stray event can only send a notification to a pane's
         // pty, where Zellij reads it, not the program in the pane. A pane not
-        // known to be open with its command running is skipped: Zellij still
-        // names the pid of a command that has exited in a pane it holds open,
-        // which the system may since have given to a process on some other
-        // terminal, where the notification would land. Until the first
-        // PaneUpdate after a load, no pane is known
+        // open with its command running is skipped: Zellij still names the
+        // pid of a command that has exited in a pane it holds open, which the
+        // system may since have given to a process on some other terminal,
+        // where the notification would land. Alerts wait for the panes to be
+        // current, so an unknown pane here has closed
         if !self.panes.get(&alert.pane).is_some_and(|p| !p.exited) {
             eprintln!(
-                "mission-control: pane {} isn't known to be running, not notifying",
+                "mission-control: pane {} isn't open with its command running, not notifying",
                 alert.pane
             );
             return;

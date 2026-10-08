@@ -40,8 +40,9 @@ show it (Ghostty, iTerm2, WezTerm and kitty all support OSC 9).
 
 To find the pty, the plugin asks Zellij for the pane's process, then reads that
 process's terminal from `/proc`, or asks `ps` where there is no `/proc`, as on
-macOS. Only a pty is ever written to. Systems other than Linux and macOS
-haven't been tried.
+macOS. Only a pty is ever written to. Linux and macOS are supported; other
+systems name terminals differently in `ps`, so there the notification is
+refused rather than sent somewhere wrong.
 
 ## Install
 

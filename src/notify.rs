@@ -12,13 +12,13 @@
 /// overwrite a file.
 ///
 /// Linux reads the controlling terminal from `/proc`, which doesn't vary like
-/// `ps` does: field 7 of `stat`, a device number whose majors 136-143 are
-/// `/dev/pts`. Where there's no `/proc`, on macOS or in a container without
-/// one, `ps` is asked, with its output expected as macOS prints it: BSD `ps`
-/// prints `-` for no terminal, which is handled, but abbreviates terminal
-/// names, which isn't. Either way only a pty, `pts/N` or `ttysN`, is written
-/// to, as a pane is always on one: a process on any other terminal has moved
-/// there, and the notification mustn't follow it.
+/// `ps` does: field 7 of `stat`, a device number whose major 136 is
+/// `/dev/pts`, with the minor as the index. Where there's no `/proc`, on macOS
+/// or in a container without one, `ps` is asked, with its output expected as
+/// macOS prints it; BSD `ps` abbreviates terminal names, which isn't handled,
+/// so only Linux and macOS are supported. Either way only a pty, `pts/N` or
+/// `ttysN`, is written to, as a pane is always on one: a process on any other
+/// terminal has moved there, and the notification mustn't follow it.
 ///
 /// Claude draws to the same pty, and a write landing inside one of its escape
 /// sequences garbles the screen. There's no way to write between its frames,
@@ -26,7 +26,6 @@
 /// once Claude stops or prompts.
 pub const NOTIFY_SH: &str = r#"
 pid=$1 title=$2 message=$3
-name=
 if stat=$(cat "/proc/$pid/stat" 2>/dev/null); then
     # The command name in field 2 can hold spaces and parens, so skip past it
     set -- ${stat##*) }
@@ -34,24 +33,24 @@ if stat=$(cat "/proc/$pid/stat" 2>/dev/null); then
     case ${dev#-} in
     '' | *[!0-9]*) echo "pane process $pid has an unreadable stat: $stat" >&2; exit 2 ;;
     esac
-    if [ "$dev" -ne 0 ]; then
-        major=$(( (dev >> 8) & 0xfff )) minor=$(( (dev & 0xff) | ((dev >> 12) & 0xfff00) ))
-        [ "$major" -ge 136 ] && [ "$major" -le 143 ] || { echo "pane process $pid's terminal (device $dev) isn't a pty" >&2; exit 2; }
-        name=pts/$(( (major - 136) * 256 + minor ))
-    fi
+    [ "$dev" -ne 0 ] || { echo "pane process $pid has no terminal" >&2; exit 2; }
+    # The major sits between the low and high bits of a 20-bit minor
+    major=$(( (dev >> 8) & 0xfff )) minor=$(( (dev & 0xff) | ((dev >> 12) & 0xfff00) ))
+    [ "$major" -eq 136 ] || { echo "pane process $pid's terminal (device $dev) isn't a pty" >&2; exit 2; }
+    tty=/dev/pts/$minor
 else
     name=$(ps -o tty= -p "$pid" 2>/dev/null | tr -d ' ')
+    case $name in
+    '' | '?' | '??' | '-') echo "pane process $pid has no terminal" >&2; exit 2 ;;
+    ttys*) n=${name#ttys} ;;
+    pts/*) n=${name#pts/} ;;
+    esac
+    # ttysNNN on macOS, or pts/N on a Linux without /proc, and nothing more
+    case ${n:-x} in
+    *[!0-9]*) echo "pane process $pid's terminal '$name' isn't a pty" >&2; exit 2 ;;
+    esac
+    tty=/dev/$name
 fi
-case $name in
-'' | '?' | '??' | '-') echo "pane process $pid has no terminal" >&2; exit 2 ;;
-pts/[0-9]*) rest=${name#pts/} ;;
-ttys[0-9]*) rest=${name#ttys} ;;
-*) rest=x ;;
-esac
-case $rest in
-*[!0-9]*) echo "pane process $pid's terminal '$name' isn't a pty" >&2; exit 2 ;;
-esac
-tty=/dev/$name
 [ -c "$tty" ] && [ -w "$tty" ] || { echo "pane tty '$tty' isn't a writable terminal" >&2; exit 2; }
 sleep 0.3
 printf '\033]777;notify;%s;%s\007' "$(printf %s "$title" | tr ';' ,)" "$(printf %s "$message" | tr ';' ,)" >>"$tty"
@@ -311,13 +310,13 @@ mod tests {
         let ps_body = ps_says("ttys001");
         let ps = ("ps", ps_body.as_str());
 
-        // A command name with spaces and parens, and a tty_nr of major 143,
+        // A command name with spaces and parens, and a tty_nr of major 136,
         // minor 0xfffff, printed signed as the kernel does. That's pts index
-        // 1050367, past any kernel's limit, so no real terminal can match.
-        let stat = "echo '1234 (my (odd) sh) S 1 1234 1234 -1011713 1234 0'";
+        // 1048575, the last a kernel can hand out, which no real terminal has.
+        let stat = "echo '1234 (my (odd) sh) S 1 1234 1234 -1013505 1234 0'";
         let out = notify("1234", "Claude", "Done", &[ps, ("cat", stat)]);
         let err = String::from_utf8_lossy(&out.stderr);
-        assert!(err.contains("'/dev/pts/1050367'"), "{err}");
+        assert!(err.contains("'/dev/pts/1048575'"), "{err}");
 
         // A tty_nr of 0 means no controlling terminal, whatever ps says
         let stat = "echo '1234 (sh) S 1 1234 1234 0 -1 0'";
