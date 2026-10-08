@@ -5,11 +5,12 @@
 ///
 /// Events come from a pipe anything running as this user can write to, so a
 /// stray or malformed event picks which pane is notified, but never where the
-/// write goes: that's the pane process's own terminal, which can only be a
-/// pane's pty while the process runs (the plugin skips panes whose command
-/// has exited, as their pid may since have been reused). It's still checked
-/// for a character device, and opened for append, so a surprise can never
-/// overwrite a file.
+/// write goes: that's the pane process's own terminal, so a pane's pty while
+/// that process runs. The plugin skips panes it knows to have closed, or whose
+/// command has exited, as of Zellij's last word on them; a pid reused in the
+/// moment between could still name another process, which is one reason only
+/// a pty is accepted below. The device is checked to be one, and opened for
+/// append, so a surprise can never overwrite a file.
 ///
 /// Linux reads the controlling terminal from `/proc`, which doesn't vary like
 /// `ps` does: field 7 of `stat`, a device number whose major 136 is
@@ -48,7 +49,7 @@ else
     esac
     # ttysNNN, as macOS names a pty, and nothing more
     case ${name#ttys} in
-    '' | *[!0-9]*) echo "pane process $pid's terminal '$name' isn't a pty" >&2; exit 2 ;;
+    '' | *[!0-9]*) echo "pane process $pid's terminal '$name' isn't a macOS pty, the only kind taken from ps" >&2; exit 2 ;;
     esac
     tty=/dev/$name
 fi
@@ -294,14 +295,14 @@ mod tests {
             &[("ps", &ps_says(&name)), NO_PROC],
         );
         let err = String::from_utf8_lossy(&out.stderr);
-        assert!(err.contains("isn't a pty"), "{err}");
+        assert!(err.contains("isn't a macOS pty"), "{err}");
         assert_eq!(std::fs::read(&file).unwrap(), b"");
 
         // Terminals that aren't a pty, and pty names with something appended
         for name in ["console", "tty1", "ttys", "pts/3", "ttys1/../console"] {
             let out = notify("1234", "Claude", "Done", &[("ps", &ps_says(name)), NO_PROC]);
             let err = String::from_utf8_lossy(&out.stderr);
-            assert!(err.contains("isn't a pty"), "{name}: {err}");
+            assert!(err.contains("isn't a macOS pty"), "{name}: {err}");
         }
 
         // A pty name that no device answers to

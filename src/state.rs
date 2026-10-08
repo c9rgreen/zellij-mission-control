@@ -414,7 +414,6 @@ impl Tracker {
         self.sessions.is_empty()
     }
 
-    #[cfg(test)]
     pub fn get(&self, pane: u32) -> Option<&Session> {
         self.sessions.get(&pane)
     }

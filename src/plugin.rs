@@ -331,7 +331,7 @@ impl ZellijPlugin for Dashboard {
                 self.on_panes(manifest);
                 self.panes_current = true;
                 for alert in std::mem::take(&mut self.pending_alerts) {
-                    self.alert(alert);
+                    self.send_alert(&alert);
                 }
                 self.mark_focused_seen();
                 self.sync_tab_names();
@@ -399,10 +399,14 @@ impl ZellijPlugin for Dashboard {
                     return false;
                 };
                 let pane = ev.pane;
+                let before = self.tracker.get(pane).map(|s| s.status.clone());
                 let alert = self.tracker.apply(ev, now());
-                // Whatever has happened in the pane since supersedes an alert
-                // still waiting to be sent
-                self.pending_alerts.retain(|a| a.pane != pane);
+                // A change of status in the pane supersedes an alert still
+                // waiting to be sent; an event that leaves the status alone,
+                // like a subagent's tool call during a prompt, doesn't
+                if alert.is_some() || self.tracker.get(pane).map(|s| &s.status) != before.as_ref() {
+                    self.pending_alerts.retain(|a| a.pane != pane);
+                }
                 if let Some(alert) = alert {
                     self.alert(alert);
                 }
@@ -1192,7 +1196,7 @@ impl Dashboard {
         // Only a pane open with its command running is notified, as of the
         // last PaneUpdate, which alerts wait for; notify.rs says why. An
         // unknown pane here has closed
-        if !self.panes.get(&alert.pane).is_some_and(|p| !p.exited) {
+        if self.panes.get(&alert.pane).is_none_or(|p| p.exited) {
             eprintln!(
                 "mission-control: pane {} isn't open with its command running, not notifying",
                 alert.pane
