@@ -1,9 +1,16 @@
 # zellij-mission-control
 
+[![CI](https://github.com/c9rgreen/zellij-mission-control/actions/workflows/ci.yml/badge.svg)](https://github.com/c9rgreen/zellij-mission-control/actions/workflows/ci.yml)
+
 A Zellij plugin that lists every Claude Code session in the current Zellij
 session, shows whether each one is working, ready, or waiting on you, and
 sends a terminal notification when one needs you. It also puts each session's
 status in front of its tab's name, so the tab bar always shows what needs you.
+
+<!-- screenshot: dashboard open over a few Claude panes, tab bar showing markers -->
+
+This is an independent project, not affiliated with Anthropic or the Zellij
+project.
 
 ## Tab markers
 
@@ -46,8 +53,22 @@ refused rather than sent somewhere wrong.
 
 ## Install
 
-Requires Zellij 0.44 or newer, which can tell a plugin a pane's process, Rust
-with the `wasm32-wasip1` target, and `jq`.
+Requires Zellij 0.44 or newer, which can tell a plugin a pane's process, and
+`jq`. Linux and macOS are supported.
+
+Download the plugin and hook script from the
+[latest release](https://github.com/c9rgreen/zellij-mission-control/releases/latest):
+
+```sh
+base=https://github.com/c9rgreen/zellij-mission-control/releases/latest/download
+mkdir -p ~/.config/zellij/plugins ~/.claude/hooks
+curl -fsSL -o ~/.config/zellij/plugins/zellij-mission-control.wasm "$base/zellij-mission-control.wasm"
+curl -fsSL -o ~/.claude/hooks/mission-control-hook.sh "$base/mission-control-hook.sh"
+chmod 755 ~/.claude/hooks/mission-control-hook.sh
+```
+
+Or build from source, which also needs Rust with the `wasm32-wasip1` target
+and [just](https://github.com/casey/just):
 
 ```sh
 just install   # builds, copies the .wasm and hook script into place
@@ -73,10 +94,27 @@ keybinds {
 }
 ```
 
-Register `sh ~/.claude/hooks/mission-control-hook.sh` in `~/.claude/settings.json`
-for SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, PostToolUseFailure,
-PermissionRequest, PermissionDenied, Notification, Stop, StopFailure, and
-SessionEnd.
+Claude Code hooks (`~/.claude/settings.json`). The same command is registered
+for each of the eleven events the plugin tracks; merge this into your existing
+`hooks` object if you already have one:
+
+```json
+{
+  "hooks": {
+    "SessionStart":       [{ "matcher": "*", "hooks": [{ "type": "command", "command": "sh ~/.claude/hooks/mission-control-hook.sh", "timeout": 5 }] }],
+    "UserPromptSubmit":   [{ "matcher": "*", "hooks": [{ "type": "command", "command": "sh ~/.claude/hooks/mission-control-hook.sh", "timeout": 5 }] }],
+    "PreToolUse":         [{ "matcher": "*", "hooks": [{ "type": "command", "command": "sh ~/.claude/hooks/mission-control-hook.sh", "timeout": 5 }] }],
+    "PostToolUse":        [{ "matcher": "*", "hooks": [{ "type": "command", "command": "sh ~/.claude/hooks/mission-control-hook.sh", "timeout": 5 }] }],
+    "PostToolUseFailure": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "sh ~/.claude/hooks/mission-control-hook.sh", "timeout": 5 }] }],
+    "PermissionRequest":  [{ "matcher": "*", "hooks": [{ "type": "command", "command": "sh ~/.claude/hooks/mission-control-hook.sh", "timeout": 5 }] }],
+    "PermissionDenied":   [{ "matcher": "*", "hooks": [{ "type": "command", "command": "sh ~/.claude/hooks/mission-control-hook.sh", "timeout": 5 }] }],
+    "Notification":       [{ "matcher": "*", "hooks": [{ "type": "command", "command": "sh ~/.claude/hooks/mission-control-hook.sh", "timeout": 5 }] }],
+    "Stop":               [{ "matcher": "*", "hooks": [{ "type": "command", "command": "sh ~/.claude/hooks/mission-control-hook.sh", "timeout": 5 }] }],
+    "StopFailure":        [{ "matcher": "*", "hooks": [{ "type": "command", "command": "sh ~/.claude/hooks/mission-control-hook.sh", "timeout": 5 }] }],
+    "SessionEnd":         [{ "matcher": "*", "hooks": [{ "type": "command", "command": "sh ~/.claude/hooks/mission-control-hook.sh", "timeout": 5 }] }]
+  }
+}
+```
 
 The first time a Zellij session loads the plugin it asks for permissions.
 
