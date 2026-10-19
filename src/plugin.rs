@@ -2,6 +2,7 @@ use crate::notify::NOTIFY_SH;
 use crate::palette::{dispatch, parse_query, Catalog, Dispatch, Entry, Query, Scope, Target};
 use crate::state::{self, format_age, fuzzy_match, Alert, Badge, HookEvent, Session, Tracker};
 use crate::tabs::{tab_name, IconSet, TabNames};
+use crate::update::{self, Drift, UpdateCheck, VERSION};
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
@@ -28,6 +29,10 @@ const STATE_TMP: &str = "/data/sessions.json.tmp";
 const RECENT_SHOWN: usize = 5;
 /// Recent actions remembered, which also break ties in the search.
 const RECENT_KEPT: usize = 20;
+/// Marks our update check's response among WebRequestResult events.
+const UPDATE_CONTEXT: &str = "mission-control::update-check";
+/// What to run when the Claude Code hook is older than this plugin.
+const HOOK_UPDATE: &str = "claude plugin update zellij-mission-control@zellij-mission-control";
 
 /// A terminal pane, as of the last PaneUpdate.
 struct Pane {
@@ -94,6 +99,12 @@ pub struct Dashboard {
     dirty: bool,
     /// The last save failed; it's retried each tick, but logged once.
     save_failing: bool,
+    /// Ask GitHub once a day whether a newer release is out.
+    update_check: bool,
+    update: UpdateCheck,
+    /// The user granted our permissions; until then a web request would fail.
+    /// Set by whichever comes first: the grant itself, or the first TabUpdate.
+    granted: bool,
 }
 
 /// The focused pane in each of a tab's layers; Zellij reports focus per layer.
@@ -274,19 +285,25 @@ impl ZellijPlugin for Dashboard {
                 IconSet::default()
             }),
         };
+        self.update_check = config.get("update_check").map(String::as_str) != Some("off");
         self.own_id = get_plugin_ids().plugin_id;
         // Panes that closed while we were gone drop out on the first PaneUpdate
         if let Ok(json) = std::fs::read_to_string(STATE_FILE) {
-            (self.tracker, self.tab_names, self.palette) = state::restore(&json);
+            (self.tracker, self.tab_names, self.palette, self.update) = state::restore(&json);
             self.saved = json;
         }
-        request_permission(&[
+        let mut permissions = vec![
             PermissionType::ReadApplicationState,
             PermissionType::ChangeApplicationState,
             PermissionType::RunCommands,
             PermissionType::ReadCliPipes,
             PermissionType::RunActionsAsUser,
-        ]);
+        ];
+        // Only asked for when it's used
+        if self.update_check {
+            permissions.push(PermissionType::WebAccess);
+        }
+        request_permission(&permissions);
         subscribe(&[
             EventType::PermissionRequestResult,
             EventType::TabUpdate,
@@ -296,6 +313,7 @@ impl ZellijPlugin for Dashboard {
             EventType::Timer,
             EventType::RunCommandResult,
             EventType::InitialKeybinds,
+            EventType::WebRequestResult,
         ]);
         tick();
     }
@@ -310,6 +328,8 @@ impl ZellijPlugin for Dashboard {
                 if !self.toggled {
                     hide_self();
                 }
+                self.granted = true;
+                self.check_for_update();
                 true
             }
             Event::TabUpdate(tabs) => {
@@ -323,6 +343,11 @@ impl ZellijPlugin for Dashboard {
                 }
                 self.active_tab = tabs.iter().find(|t| t.active).map(|t| t.position);
                 self.tabs = tabs;
+                // Zellij holds events back until the user grants what we asked
+                // for, and drops them if they decline, so tabs mean we may use
+                // the web. PermissionRequestResult doesn't always arrive: Zellij
+                // can send it before load has subscribed to it.
+                self.granted = true;
                 self.mark_focused_seen();
                 self.sync_tab_names();
                 true
@@ -371,10 +396,25 @@ impl ZellijPlugin for Dashboard {
                 }
                 false
             }
+            Event::WebRequestResult(status, headers, body, context)
+                if context.contains_key(UPDATE_CONTEXT) =>
+            {
+                let changed = self.update.receive(status, &headers, &body, now());
+                self.dirty = true;
+                match changed {
+                    Ok(changed) => changed && self.own_visible(),
+                    Err(e) => {
+                        // Offline or rate limited; it's retried within the hour
+                        eprintln!("mission-control: update check failed: {e}");
+                        false
+                    }
+                }
+            }
             Event::Timer(_) => {
                 tick();
                 self.lit = lit_at(now_ms());
                 self.sync_tab_names();
+                self.check_for_update();
                 self.persist();
                 // Only the ages and blinking icons change, which matter only while shown
                 self.own_visible()
@@ -520,7 +560,7 @@ impl ZellijPlugin for Dashboard {
             let about = &self.catalog.entries[i].about;
             (!about.is_empty()).then(|| Text::new(about).dim_all())
         } else {
-            None
+            self.notice()
         };
         if let Some(detail) = detail {
             print_text_with_coordinates(
@@ -549,12 +589,56 @@ impl ZellijPlugin for Dashboard {
 }
 
 impl Dashboard {
+    /// Ask GitHub for the latest release, if it's time to. Each Zellij session
+    /// keeps its own /data, so each checks on its own schedule.
+    fn check_for_update(&mut self) {
+        let now = now();
+        if !self.update_check || !self.granted || !self.update.due(now) {
+            return;
+        }
+        let Some(url) = update::latest_release_url() else {
+            return;
+        };
+        let headers = self.update.send(now);
+        let context = BTreeMap::from([(UPDATE_CONTEXT.to_owned(), String::new())]);
+        web_request(url, HttpVerb::Get, headers, Vec::new(), context);
+    }
+
+    /// What to tell the user when nothing else needs the line above the key
+    /// help: a hook from another release first, since that can break
+    /// tracking, then a newer release.
+    fn notice(&self) -> Option<Text> {
+        let drift = self
+            .tracker
+            .sorted(|_| None)
+            .into_iter()
+            .find_map(|s| update::drift(s.hook_version.as_deref()));
+        let msg = match drift {
+            Some(Drift::HookBehind(hook)) => format!(
+                "The Claude Code hook is v{hook} and this plugin is v{VERSION}. Run: {HOOK_UPDATE}"
+            ),
+            Some(Drift::PluginBehind(hook)) => format!(
+                "This plugin is v{VERSION} and the Claude Code hook is v{hook}. \
+                 Change v{VERSION} to v{hook} in the plugin URL in config.kdl."
+            ),
+            None => {
+                let latest = self.update.available()?;
+                let version = latest.strip_prefix('v').unwrap_or(latest);
+                format!(
+                    "v{version} is out. Change v{VERSION} to v{version} in the plugin URL in \
+                     config.kdl, then run: {HOOK_UPDATE}"
+                )
+            }
+        };
+        Some(Text::new(msg).color_range(2, ..))
+    }
+
     /// Save state if it changed since the last save.
     fn persist(&mut self) {
         if !std::mem::take(&mut self.dirty) {
             return;
         }
-        let json = state::save(&self.tracker, &self.tab_names, &self.palette);
+        let json = state::save(&self.tracker, &self.tab_names, &self.palette, &self.update);
         if json == self.saved {
             return;
         }

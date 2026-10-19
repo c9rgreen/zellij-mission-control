@@ -8,6 +8,11 @@ on you. It sends a terminal notification the moment one needs you. And it
 gives you a dashboard that lists every Claude pane, most urgent first, so you
 can jump straight to it.
 
+The dashboard is also a command palette for all of Zellij. Type a few letters
+to fuzzy-search your tab names and every `zellij action`, then press Enter to
+switch to the tab or run the command. You don't need Claude Code running to
+use it.
+
 <!-- TODO: screenshot of the dashboard open over a few Claude panes, with markers in the tab bar -->
 
 This is an independent project, not affiliated with Anthropic or Zellij.
@@ -55,7 +60,7 @@ Zellij downloads the plugin from that URL once and caches it. The URL names a
 version on purpose. Zellij caches a plugin by its URL for good, so a URL that
 always pointed at the latest release would never update.
 
-On first load the plugin asks you to grant five permissions. Accept them. Each
+On first load the plugin asks you to grant six permissions. Accept them. Each
 one is used for a single thing:
 
 | Permission | Used for |
@@ -65,6 +70,10 @@ one is used for a single thing:
 | Run commands | finding a pane's terminal with `ps` and writing the notification to it |
 | Read CLI pipes | receiving events from the Claude Code hook |
 | Run actions as the user | the dashboard's command palette |
+| Make web requests | the daily [update check](#update-check); not asked for when it's off |
+
+Zellij asks again after each upgrade, because it remembers permissions per
+plugin URL.
 
 ### 2. Claude Code
 
@@ -89,6 +98,10 @@ notification. Press `Alt a` to open the dashboard.
 If nothing happens, see [Troubleshooting](#troubleshooting).
 
 ### Upgrading
+
+The dashboard tells you when a new release is out, on the line above the key
+help. It also tells you when the Zellij plugin and the Claude Code hook come
+from different releases, and which one to update.
 
 A release changes both halves, and their versions should match.
 
@@ -176,8 +189,23 @@ mission-control location="https://github.com/c9rgreen/zellij-mission-control/rel
     notify "on"        // "on" | "off": terminal notification when a pane needs you
     tab_markers "on"   // "on" | "off": status icon in front of tab names
     icons "nerd"       // "nerd" | "unicode" | "ascii": which icon set to draw
+    update_check "on"  // "on" | "off": ask GitHub once a day for a newer release
 }
 ```
+
+### Update check
+
+Once a day, the plugin asks GitHub's API for this project's latest release.
+The request is a plain GET with no cookies or identifiers. GitHub sees your IP
+address and a user agent that names the plugin and its version. Nothing else
+is sent, and nothing is sent anywhere else.
+
+Each Zellij session checks on its own schedule: once when it starts, then
+every 24 hours. A failed check is retried an hour later and only logged.
+Zellij's log is the only place an error shows.
+
+To turn it off, set `update_check "off"`. The plugin then never makes a web
+request and doesn't ask for the permission.
 
 ### Tab markers
 

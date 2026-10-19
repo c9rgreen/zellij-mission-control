@@ -17,11 +17,12 @@ install: build
     -[ -n "${ZELLIJ:-}" ] && zellij action start-or-reload-plugin mission-control
 
 # Set the release version everywhere it's written down: Cargo.toml, Cargo.lock,
-# the Claude Code plugin manifest, and the README's release URLs. Commit, then
-# tag v<version>; the release workflow checks that they agree.
+# the Claude Code plugin manifest, the hook script, and the README's release
+# URLs. Commit, then tag v<version>; the release workflow checks that they agree.
 bump version:
     perl -pi -e 's/^version = "[^"]*"/version = "{{version}}"/' Cargo.toml
     perl -pi -e 's/"version": "[^"]*"/"version": "{{version}}"/' .claude-plugin/plugin.json
+    perl -pi -e 's/^hook_version="[^"]*"/hook_version="{{version}}"/' hooks/mission-control-hook.sh
     perl -pi -e 's{releases/download/v[^/]+/}{releases/download/v{{version}}/}g' README.md
     cargo update --workspace
     @git --no-pager diff --stat

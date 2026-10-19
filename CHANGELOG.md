@@ -13,8 +13,13 @@ All notable changes to this project are recorded here. The format follows
   `claude plugin install zellij-mission-control@zellij-mission-control`
   instead of hand-editing `settings.json`.
 
+- The dashboard says when a newer release is out. The plugin asks GitHub
+  once a day, needs the "Make web requests" permission for it, and can be
+  turned off with `update_check "off"`.
+- The hook now sends its version with each event. The dashboard says when the
+  hook and the plugin come from different releases, and which to update.
 - `just bump <version>` sets the version in `Cargo.toml`, `Cargo.lock`, the
-  plugin manifest and the README's release URLs in one go. The release
+  plugin manifest, the hook script and the README's release URLs in one go. The release
   workflow refuses a tag those files don't agree with.
 
 ### Changed

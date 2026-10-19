@@ -5,6 +5,7 @@ mod notify;
 mod palette;
 mod state;
 mod tabs;
+mod update;
 
 #[cfg(target_family = "wasm")]
 mod plugin;

@@ -26,6 +26,7 @@ jobs:
           check() { grep -qF -- "$2" "$1" || { echo "::error file=$1::expected '$2'"; fail=1; }; }
           check Cargo.toml                 "version = \"$tag\""
           check .claude-plugin/plugin.json "\"version\": \"$tag\""
+          check hooks/mission-control-hook.sh "hook_version=\"$tag\""
           check README.md                  "releases/download/v$tag/zellij-mission-control.wasm"
           exit $fail
 

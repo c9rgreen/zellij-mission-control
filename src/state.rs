@@ -1,6 +1,7 @@
 //! Session tracking, kept free of zellij-tile so it can be unit tested natively.
 
 use crate::tabs::TabNames;
+use crate::update::UpdateCheck;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use zellij_utils::data::InputMode;
@@ -24,6 +25,8 @@ pub struct HookEvent {
     pub at: f64,
     /// The subagent the event came from; None for the main thread.
     pub agent_id: Option<String>,
+    /// The release the hook script came from; None before hooks sent it.
+    pub hook_version: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -79,6 +82,10 @@ pub struct Session {
     /// `at` of the newest event of any kind.
     #[serde(default)]
     latest_at: f64,
+    /// The release of the hook that last reported here. A session keeps the
+    /// hook it started with, so after an update this changes on restart.
+    #[serde(default)]
+    pub hook_version: Option<String>,
 }
 
 impl Session {
@@ -211,10 +218,12 @@ impl Tracker {
             calls: Vec::new(),
             boundary_at: 0.0,
             latest_at: 0.0,
+            hook_version: None,
         });
         if !ev.cwd.is_empty() {
             session.cwd = ev.cwd.clone();
         }
+        session.hook_version = ev.hook_version.clone();
         let late = ev.at > 0.0 && ev.at < session.latest_at;
         session.latest_at = session.latest_at.max(ev.at);
         if is_boundary(&ev.event) {
@@ -506,15 +515,19 @@ struct Saved {
     ended: BTreeMap<u32, f64>,
     #[serde(default)]
     palette: Palette,
+    #[serde(default)]
+    update: UpdateCheck,
 }
 
-/// Sessions, tab names and the palette's state as JSON, to survive a plugin reload.
-pub fn save(tracker: &Tracker, tabs: &TabNames, palette: &Palette) -> String {
+/// Sessions, tab names, the palette's state and the update check as JSON, to
+/// survive a plugin reload.
+pub fn save(tracker: &Tracker, tabs: &TabNames, palette: &Palette, update: &UpdateCheck) -> String {
     let saved = Saved {
         sessions: tracker.sessions.values().cloned().collect(),
         tabs: tabs.clone(),
         ended: tracker.ended.clone(),
         palette: palette.clone(),
+        update: update.clone(),
     };
     serde_json::to_string(&saved).unwrap_or_default()
 }
@@ -522,27 +535,22 @@ pub fn save(tracker: &Tracker, tabs: &TabNames, palette: &Palette) -> String {
 /// What `save` wrote, or the bare session list earlier versions wrote.
 /// Anything unreadable starts empty; sessions reappear as they fire hook
 /// events.
-pub fn restore(json: &str) -> (Tracker, TabNames, Palette) {
+pub fn restore(json: &str) -> (Tracker, TabNames, Palette, UpdateCheck) {
+    let empty = |sessions| Saved {
+        sessions,
+        tabs: TabNames::default(),
+        ended: BTreeMap::new(),
+        palette: Palette::default(),
+        update: UpdateCheck::default(),
+    };
     let saved = serde_json::from_str::<Saved>(json)
-        .or_else(|_| {
-            serde_json::from_str(json).map(|sessions| Saved {
-                sessions,
-                tabs: TabNames::default(),
-                ended: BTreeMap::new(),
-                palette: Palette::default(),
-            })
-        })
-        .unwrap_or(Saved {
-            sessions: Vec::new(),
-            tabs: TabNames::default(),
-            ended: BTreeMap::new(),
-            palette: Palette::default(),
-        });
+        .or_else(|_| serde_json::from_str(json).map(empty))
+        .unwrap_or_else(|_| empty(Vec::new()));
     let tracker = Tracker {
         sessions: saved.sessions.into_iter().map(|s| (s.pane, s)).collect(),
         ended: saved.ended,
     };
-    (tracker, saved.tabs, saved.palette)
+    (tracker, saved.tabs, saved.palette, saved.update)
 }
 
 /// Fuzzy-match a query against a row's fields. Each space-separated term must
@@ -1101,13 +1109,20 @@ mod tests {
             recent: vec!["close-pane".into()],
             base_mode: Some(InputMode::Locked),
         };
-        let (r, tabs, restored) = restore(&save(&t, &tabs, &palette));
+        let update = UpdateCheck {
+            next_at: 9,
+            latest: Some("v9.0.0".into()),
+            etag: Some("e".into()),
+            sent_at: 0,
+        };
+        let (r, tabs, restored, restored_update) = restore(&save(&t, &tabs, &palette, &update));
         let s = r.get(3).unwrap();
         assert_eq!(s.status, Status::NeedsInput("Wants to use Bash".into()));
         assert_eq!((s.since, s.project()), (5, "my-app"));
         assert!(r.get(4).unwrap().seen);
         assert_eq!(tabs.base(2, "! api"), "api");
         assert_eq!(restored, palette);
+        assert_eq!(restored_update, update);
         // The bare session list earlier versions saved
         let old = serde_json::to_string(&r.sorted(|_| None)).unwrap();
         assert!(restore(&old).0.get(3).is_some());
@@ -1121,7 +1136,12 @@ mod tests {
             },
             0,
         );
-        let (mut r, ..) = restore(&save(&t, &TabNames::default(), &Palette::default()));
+        let (mut r, ..) = restore(&save(
+            &t,
+            &TabNames::default(),
+            &Palette::default(),
+            &UpdateCheck::default(),
+        ));
         r.apply(
             HookEvent {
                 at: 1.0,
