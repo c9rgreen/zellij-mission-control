@@ -16,6 +16,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The README pins the release URL and the plugin manifests carry the
+      # version, because Zellij caches a plugin by URL. Refuse to release a
+      # tag that the files don't agree with; `just bump <version>` sets them.
+      - name: Check versions match the tag
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          fail=0
+          check() { grep -qF -- "$2" "$1" || { echo "::error file=$1::expected '$2'"; fail=1; }; }
+          check Cargo.toml                 "version = \"$tag\""
+          check .claude-plugin/plugin.json "\"version\": \"$tag\""
+          check README.md                  "releases/download/v$tag/zellij-mission-control.wasm"
+          exit $fail
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-wasip1

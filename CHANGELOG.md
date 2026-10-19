@@ -13,6 +13,10 @@ All notable changes to this project are recorded here. The format follows
   `claude plugin install zellij-mission-control@zellij-mission-control`
   instead of hand-editing `settings.json`.
 
+- `just bump <version>` sets the version in `Cargo.toml`, `Cargo.lock`, the
+  plugin manifest and the README's release URLs in one go. The release
+  workflow refuses a tag those files don't agree with.
+
 ### Changed
 
 - The README now has Zellij load the plugin straight from the release URL,
