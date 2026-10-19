@@ -1,0 +1,10 @@
+{
+  "name": "zellij-mission-control",
+  "version": "0.1.0",
+  "description": "Forwards Claude Code hook events to the zellij-mission-control Zellij plugin, which tracks every session and tells you when one needs you",
+  "author": { "name": "Christopher Green", "url": "https://github.com/c9rgreen" },
+  "homepage": "https://github.com/c9rgreen/zellij-mission-control",
+  "repository": "https://github.com/c9rgreen/zellij-mission-control",
+  "license": "MIT",
+  "keywords": ["zellij", "hooks", "terminal", "notifications"]
+}

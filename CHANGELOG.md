@@ -4,6 +4,20 @@ All notable changes to this project are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- A Claude Code plugin manifest and marketplace, so the hooks install with
+  `claude plugin marketplace add c9rgreen/zellij-mission-control` and
+  `claude plugin install zellij-mission-control@zellij-mission-control`
+  instead of hand-editing `settings.json`.
+
+### Changed
+
+- The README now has Zellij load the plugin straight from the release URL,
+  with the local `file:` location kept for builds from source.
+
 ## [0.1.0] - 2026-10-19
 
 First public release.
@@ -27,4 +41,5 @@ First public release.
   and forwards it to the plugin with `zellij pipe`.
 - `notify`, `tab_markers` and `icons` plugin options.
 
+[Unreleased]: https://github.com/c9rgreen/zellij-mission-control/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/c9rgreen/zellij-mission-control/releases/tag/v0.1.0

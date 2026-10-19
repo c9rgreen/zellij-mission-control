@@ -1,0 +1,14 @@
+{
+  "name": "zellij-mission-control",
+  "description": "The Claude Code side of zellij-mission-control: hooks that report each session's state to the Zellij plugin",
+  "owner": { "name": "Christopher Green", "url": "https://github.com/c9rgreen" },
+  "plugins": [
+    {
+      "name": "zellij-mission-control",
+      "source": ".",
+      "description": "Forwards Claude Code hook events to the zellij-mission-control Zellij plugin",
+      "category": "productivity",
+      "tags": ["zellij", "hooks", "terminal"]
+    }
+  ]
+}

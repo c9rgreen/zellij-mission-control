@@ -54,31 +54,18 @@ refused rather than sent somewhere wrong.
 ## Install
 
 Requires Zellij 0.44 or newer, which can tell a plugin a pane's process, and
-`jq`. Linux and macOS are supported.
+`jq`. Linux and macOS are supported. There are two halves: the Zellij plugin,
+and a Claude Code hook that reports to it.
 
-Download the plugin and hook script from the
-[latest release](https://github.com/c9rgreen/zellij-mission-control/releases/latest):
+### Zellij
 
-```sh
-base=https://github.com/c9rgreen/zellij-mission-control/releases/latest/download
-mkdir -p ~/.config/zellij/plugins ~/.claude/hooks
-curl -fsSL -o ~/.config/zellij/plugins/zellij-mission-control.wasm "$base/zellij-mission-control.wasm"
-curl -fsSL -o ~/.claude/hooks/mission-control-hook.sh "$base/mission-control-hook.sh"
-chmod 755 ~/.claude/hooks/mission-control-hook.sh
-```
-
-Or build from source, which also needs Rust with the `wasm32-wasip1` target
-and [just](https://github.com/casey/just):
-
-```sh
-just install   # builds, copies the .wasm and hook script into place
-```
-
-Zellij config (`~/.config/zellij/config.kdl`):
+Add this to `~/.config/zellij/config.kdl`. Zellij downloads the plugin from
+the release URL the first time it loads and caches it by URL, so to upgrade,
+change the version in the URL:
 
 ```kdl
 plugins {
-    mission-control location="file:~/.config/zellij/plugins/zellij-mission-control.wasm" {
+    mission-control location="https://github.com/c9rgreen/zellij-mission-control/releases/download/v0.1.0/zellij-mission-control.wasm" {
         // notify "on" | "off"
         // tab_markers "on" | "off"
         // icons "nerd" | "unicode" | "ascii"
@@ -94,9 +81,45 @@ keybinds {
 }
 ```
 
-Claude Code hooks (`~/.claude/settings.json`). The same command is registered
-for each of the eleven events the plugin tracks; merge this into your existing
-`hooks` object if you already have one:
+The first time a Zellij session loads the plugin it asks for five permissions:
+read application state (to see panes and tabs), change application state (to
+rename tabs and focus panes), run commands (to look up a pane's pty with `ps`
+and write the notification to it), read CLI pipes (to receive the hook's
+events), and run actions as you (for the command palette).
+
+### Claude Code
+
+Install the hooks as a Claude Code plugin. This repository is its own
+marketplace:
+
+```sh
+claude plugin marketplace add c9rgreen/zellij-mission-control
+claude plugin install zellij-mission-control@zellij-mission-control
+```
+
+Inside a running session, `/plugin marketplace add c9rgreen/zellij-mission-control`
+then `/plugin install zellij-mission-control@zellij-mission-control` does the
+same through the plugin browser. Either way, run `/reload-plugins` in any
+session that was already open, or start a new one. Nothing in
+`~/.claude/settings.json` needs editing.
+
+### Alternatives
+
+To build the plugin from source you also need Rust with the `wasm32-wasip1`
+target and [just](https://github.com/casey/just). `just install` builds the
+`.wasm`, copies it and the hook script into place, and reloads the plugin.
+Point Zellij at the local file instead of the URL:
+
+```kdl
+    mission-control location="file:~/.config/zellij/plugins/zellij-mission-control.wasm" {
+```
+
+To register the hooks by hand instead of through the plugin, download
+`mission-control-hook.sh` from the
+[latest release](https://github.com/c9rgreen/zellij-mission-control/releases/latest)
+into `~/.claude/hooks/`, make it executable, and merge this into the `hooks`
+object of `~/.claude/settings.json`. The same command runs for each of the
+eleven events the plugin tracks:
 
 ```json
 {
@@ -115,8 +138,6 @@ for each of the eleven events the plugin tracks; merge this into your existing
   }
 }
 ```
-
-The first time a Zellij session loads the plugin it asks for permissions.
 
 ## Keys
 
