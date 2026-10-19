@@ -17,6 +17,10 @@ All notable changes to this project are recorded here. The format follows
 
 - The README now has Zellij load the plugin straight from the release URL,
   with the local `file:` location kept for builds from source.
+- The README is reordered for first-time readers: install, a check that it
+  works, upgrading, using the dashboard, configuration and troubleshooting
+  come before the internals. The build-from-source and manual-hook paths are
+  collapsed behind a details block.
 
 ## [0.1.0] - 2026-10-19
 
